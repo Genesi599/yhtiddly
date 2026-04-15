@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.log
+tiddlers.db
+tiddlers.db-journal
+tiddlers.db-wal
+tiddlers.db-shm
+config.json
+.DS_Store

@@ -1,0 +1,25 @@
+{
+  "name": "tw-sync-desktop",
+  "version": "0.1.0",
+  "description": "TiddlyWiki desktop sync app with local SQLite cache and background remote sync",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "pack:win": "electron-packager . TWSync --platform=win32 --arch=x64 --out=dist --overwrite --icon=ui/tray-icon.png --app-copyright=\"yh109\"",
+    "pack:mac": "electron-packager . TWSync --platform=darwin --arch=x64 --out=dist --overwrite --icon=ui/tray-icon.png",
+    "pack:linux": "electron-packager . TWSync --platform=linux --arch=x64 --out=dist --overwrite"
+  },
+  "author": "yh109",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "express": "^4.21.0",
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-packager": "^17.1.2",
+    "@electron/rebuild": "^3.6.0"
+  }
+}

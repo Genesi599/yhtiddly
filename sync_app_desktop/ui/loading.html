@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>初始化</title>
+<style>
+    body {
+        font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+        margin: 0;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        background: #fff;
+        color: #333;
+        user-select: none;
+        -webkit-app-region: drag;
+    }
+    h1 { font-size: 16px; font-weight: 500; margin: 0 0 18px; }
+    .progress-outer {
+        width: 80%;
+        height: 8px;
+        background: #eee;
+        border-radius: 4px;
+        overflow: hidden;
+    }
+    .progress-inner {
+        height: 100%;
+        width: 0%;
+        background: #4a90e2;
+        transition: width 0.3s;
+    }
+    .counts {
+        margin-top: 14px;
+        font-size: 12px;
+        color: #666;
+    }
+    .hint {
+        margin-top: 8px;
+        font-size: 11px;
+        color: #aaa;
+    }
+</style>
+</head>
+<body>
+    <h1>正在从远程服务器同步…</h1>
+    <div class="progress-outer"><div class="progress-inner" id="bar"></div></div>
+    <div class="counts" id="counts">准备中...</div>
+    <div class="hint">首次启动需要拉取全部 tiddler，之后启动会秒开</div>
+
+<script>
+    window.twApi.onProgress((p) => {
+        const pct = p.total > 0 ? Math.min(100, Math.round((p.done / p.total) * 100)) : 0;
+        document.getElementById('bar').style.width = pct + '%';
+        document.getElementById('counts').textContent = p.done + ' / ' + p.total + ' (' + pct + '%)';
+    });
+</script>
+
+</body>
+</html>
