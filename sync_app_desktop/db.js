@@ -26,6 +26,16 @@ CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS http_cache (
+    url           TEXT PRIMARY KEY,
+    status        INTEGER NOT NULL,
+    headers       TEXT NOT NULL,
+    body          BLOB NOT NULL,
+    etag          TEXT,
+    last_modified TEXT,
+    updated_at    INTEGER NOT NULL
+);
 `;
 
 function init(dbPath) {
@@ -209,6 +219,52 @@ function getMeta(key) {
     return row ? row.value : null;
 }
 
+// --- HTTP response cache (for proxied HTML/JS/CSS) ---
+
+function cacheGet(url) {
+    const row = db.prepare('SELECT status, headers, body, etag, last_modified, updated_at FROM http_cache WHERE url = ?').get(url);
+    if (!row) return null;
+    return {
+        status: row.status,
+        headers: JSON.parse(row.headers),
+        body: row.body,
+        etag: row.etag,
+        lastModified: row.last_modified,
+        updatedAt: row.updated_at
+    };
+}
+
+function cacheSet(url, entry) {
+    db.prepare(`
+        INSERT INTO http_cache (url, status, headers, body, etag, last_modified, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(url) DO UPDATE SET
+            status        = excluded.status,
+            headers       = excluded.headers,
+            body          = excluded.body,
+            etag          = excluded.etag,
+            last_modified = excluded.last_modified,
+            updated_at    = excluded.updated_at
+    `).run(
+        url,
+        entry.status,
+        JSON.stringify(entry.headers || {}),
+        entry.body,
+        entry.etag || null,
+        entry.lastModified || null,
+        entry.updatedAt || Date.now()
+    );
+}
+
+function cacheClear() {
+    db.prepare('DELETE FROM http_cache').run();
+}
+
+function cacheStats() {
+    const row = db.prepare('SELECT COUNT(*) AS c, SUM(LENGTH(body)) AS bytes FROM http_cache').get();
+    return { entries: row.c, bytes: row.bytes || 0 };
+}
+
 function close() {
     if (db) {
         db.close();
@@ -221,5 +277,6 @@ module.exports = {
     getTiddler, listSkinny, listFull, putTiddler, bulkPutRemote,
     deleteTiddler, purgeTombstone,
     getDirty, clearDirty, getAllTitles, getModifiedMap, count, countDirty,
-    setMeta, getMeta
+    setMeta, getMeta,
+    cacheGet, cacheSet, cacheClear, cacheStats
 };

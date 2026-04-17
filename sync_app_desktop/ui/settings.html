@@ -92,9 +92,29 @@
     <label>维护</label>
     <div class="btnrow">
         <button id="btnSyncNow">立即同步</button>
+        <button id="btnClearHttpCache">清空页面缓存</button>
         <button id="btnReset" class="danger">清空本地缓存</button>
     </div>
-    <div class="hint">清空本地缓存会触发下次启动时重新从远程全量拉取。</div>
+
+    <!-- Sync progress -->
+    <div id="syncPanel" style="margin-top:10px; display:none; padding:10px; background:#eef5ff; border-radius:4px;">
+        <div id="syncPhase" style="font-size:12px; color:#333; margin-bottom:6px;">-</div>
+        <div style="height:6px; background:#ddd; border-radius:3px; overflow:hidden;">
+            <div id="syncBar" style="height:100%; width:0%; background:#4a90e2; transition:width 0.2s;"></div>
+        </div>
+        <div id="syncCounts" style="font-size:11px; color:#666; margin-top:5px;">-</div>
+    </div>
+
+    <!-- Errors list -->
+    <div id="errorPanel" style="margin-top:10px; display:none; padding:8px; background:#fff3f3; border-radius:4px; max-height:120px; overflow:auto;">
+        <div style="font-size:12px; color:#c44; margin-bottom:4px;">
+            <b>失败的 tiddler</b>（可以再点立即同步重试）：
+        </div>
+        <div id="errorList" style="font-size:11px; font-family:monospace; color:#a33;"></div>
+    </div>
+
+    <div class="hint" id="cacheInfo">-</div>
+    <div class="hint">清空<b>页面缓存</b>只清 HTML/JS/CSS 等代理缓存（tiddler 数据保留）。清空<b>本地缓存</b>会连 tiddler 一起清掉，下次启动重新全量拉取。</div>
 </div>
 
 <script>
@@ -139,11 +159,84 @@
         setTimeout(() => window.twApi.closeSettings(), 400);
     };
 
+    // Listen for live sync status updates
+    window.twApi.onSyncStatus((s) => {
+        const panel = $('syncPanel');
+        const bar = $('syncBar');
+        const phaseEl = $('syncPhase');
+        const counts = $('syncCounts');
+
+        if (s.phase === 'idle' && s.status === 'done') {
+            phaseEl.textContent = '完成';
+            bar.style.width = '100%';
+            bar.style.background = '#3a3';
+            setTimeout(() => { panel.style.display = 'none'; bar.style.background = '#4a90e2'; }, 2000);
+            return;
+        }
+        if (s.phase === 'idle' && s.status === 'error') {
+            phaseEl.textContent = '出错：' + (s.error || '');
+            bar.style.background = '#c44';
+            return;
+        }
+
+        panel.style.display = 'block';
+
+        if (s.phase === 'push') {
+            if (s.status === 'starting' || s.status === 'pushing') {
+                const t = s.pushTotal || 0, d = s.pushDone || 0;
+                phaseEl.textContent = '上传本地修改…';
+                bar.style.width = t > 0 ? Math.round(d / t * 100) + '%' : '5%';
+                counts.textContent = t > 0 ? (d + ' / ' + t) : '无需上传';
+            }
+        } else if (s.phase === 'pull') {
+            if (s.status === 'listing') {
+                phaseEl.textContent = '获取远程列表…';
+                bar.style.width = '10%';
+                counts.textContent = '';
+            } else if (s.status === 'fetching') {
+                const t = s.pullTotal || 0, d = s.pullDone || 0;
+                phaseEl.textContent = '下载缺失/更新的 tiddler…';
+                bar.style.width = t > 0 ? Math.round(d / t * 100) + '%' : '100%';
+                counts.textContent = (d + ' / ' + t) + (s.errors ? '，失败 ' + s.errors : '');
+            }
+        }
+    });
+
     $('btnSyncNow').onclick = async () => {
-        setStatus('同步中...', '');
+        setStatus('同步中…', '');
+        $('errorPanel').style.display = 'none';
+        $('errorList').innerHTML = '';
+        $('btnSyncNow').disabled = true;
+
         const r = await window.twApi.syncNow();
-        if (r && r.error) setStatus('失败: ' + r.error, 'err');
-        else setStatus('推送 ' + (r.pushed || 0) + ' 条，拉取 ' + (r.pulled || 0) + ' 条', 'ok');
+        $('btnSyncNow').disabled = false;
+
+        if (r && r.error) {
+            setStatus('失败: ' + r.error, 'err');
+        } else {
+            const errs = (r.errors || []).length;
+            let msg = '推送 ' + (r.pushed || 0) + '，拉取 ' + (r.pulled || 0);
+            if (r.removed) msg += '，移除 ' + r.removed;
+            if (errs > 0) msg += '，失败 ' + errs;
+            setStatus(msg, errs > 0 ? 'err' : 'ok');
+
+            if (errs > 0) {
+                $('errorPanel').style.display = 'block';
+                const list = $('errorList');
+                r.errors.slice(0, 50).forEach((e) => {
+                    const line = document.createElement('div');
+                    line.textContent = (e.op || '?') + ' | ' + (e.title || '-') + ' → ' + e.msg;
+                    list.appendChild(line);
+                });
+                if (r.errors.length > 50) {
+                    const more = document.createElement('div');
+                    more.textContent = '…还有 ' + (r.errors.length - 50) + ' 条';
+                    list.appendChild(more);
+                }
+            }
+            console.log('sync report:', r);
+        }
+        refreshCacheInfo();
     };
 
     $('btnReset').onclick = async () => {
@@ -152,6 +245,21 @@
         if (r.ok) setStatus('已清空，重启应用后生效', 'ok');
         else setStatus('失败: ' + r.error, 'err');
     };
+
+    $('btnClearHttpCache').onclick = async () => {
+        const r = await window.twApi.clearHttpCache();
+        if (r.ok) {
+            setStatus('页面缓存已清空', 'ok');
+            refreshCacheInfo();
+        } else setStatus('失败: ' + r.error, 'err');
+    };
+
+    async function refreshCacheInfo() {
+        const stats = await window.twApi.cacheStats();
+        const mb = (stats.bytes / 1024 / 1024).toFixed(2);
+        $('cacheInfo').textContent = '页面缓存：' + stats.entries + ' 条，' + mb + ' MB';
+    }
+    refreshCacheInfo();
 })();
 </script>
 

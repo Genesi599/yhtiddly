@@ -48,21 +48,64 @@ function defaultHeaders(extra = {}) {
 
 async function fetchRemoteSkinnyList() {
     const url = remoteUrl('/recipes/default/tiddlers.json');
-    const res = await fetch(url, { headers: defaultHeaders() });
+    const res = await fetch(url, { headers: defaultHeaders(), timeout: 60000 });
     if (!res.ok) throw new Error('list: HTTP ' + res.status);
     return res.json();  // array of {title, modified, revision, ...}
 }
 
-async function fetchRemoteTiddler(title) {
+function normalizeTiddlerResponse(data, knownTitle) {
+    // TW server returns the tiddler's field object, sometimes wrapped in {revision, fields},
+    // and often WITHOUT an explicit "title" field (since title is in the URL).
+    // We inject the title we already know so downstream code works.
+    if (!data) return null;
+    let fields;
+    let revision = data.revision || '0';
+    if (data.fields && typeof data.fields === 'object') {
+        fields = data.fields;
+    } else if (typeof data === 'object') {
+        fields = data;
+    } else {
+        return null;
+    }
+    if (!fields.title) fields.title = knownTitle;
+    return { revision, fields };
+}
+
+async function fetchRemoteTiddlerOnce(title) {
     const url = remoteUrl('/recipes/default/tiddlers/' + encodeURIComponent(title));
-    const res = await fetch(url, { headers: defaultHeaders() });
-    if (res.status === 404) return null;
-    if (!res.ok) throw new Error('get ' + title + ': HTTP ' + res.status);
-    const data = await res.json();
-    // TW returns {revision, fields:{...}} or the flat object depending on version.
-    if (data && data.fields) return { revision: data.revision || '0', fields: data.fields };
-    if (data && data.title) return { revision: data.revision || '0', fields: data };
-    return null;
+    const res = await fetch(url, { headers: defaultHeaders(), timeout: 30000 });
+    if (res.status === 404) {
+        const bagUrl = remoteUrl('/bags/default/tiddlers/' + encodeURIComponent(title));
+        const bagRes = await fetch(bagUrl, { headers: defaultHeaders(), timeout: 30000 });
+        if (bagRes.status === 404) return null;
+        if (!bagRes.ok) throw new Error('HTTP ' + bagRes.status + ' (bag fallback)');
+        const bagText = await bagRes.text();
+        try { return normalizeTiddlerResponse(JSON.parse(bagText), title); }
+        catch (e) { throw new Error('bad JSON (bag): ' + bagText.slice(0, 80)); }
+    }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); }
+    catch (e) { throw new Error('bad JSON: ' + text.slice(0, 80)); }
+    return normalizeTiddlerResponse(data, title);
+}
+
+// Wrap with retries (3 attempts, exponential backoff)
+async function fetchRemoteTiddler(title) {
+    let lastErr = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            return await fetchRemoteTiddlerOnce(title);
+        } catch (e) {
+            lastErr = e;
+            if (attempt < 2) {
+                // backoff 500ms, 1500ms
+                await new Promise(r => setTimeout(r, 500 * (1 + attempt * 2)));
+            }
+        }
+    }
+    throw lastErr;
 }
 
 async function pushTiddler(title, fields) {
@@ -203,11 +246,13 @@ async function syncOnce() {
     const report = { pushed: 0, deleted: 0, pulled: 0, removed: 0, errors: [] };
 
     try {
-        emit({ phase: 'push', status: 'starting' });
+        emit({ phase: 'push', status: 'starting', pushTotal: 0, pushDone: 0 });
 
         // --- Push phase ---
         const dirty = db.getDirty();
-        for (const d of dirty) {
+        for (let i = 0; i < dirty.length; i++) {
+            const d = dirty[i];
+            emit({ phase: 'push', status: 'pushing', pushTotal: dirty.length, pushDone: i });
             try {
                 if (d.tombstone) {
                     await pushDeletion(d.title);
@@ -223,25 +268,23 @@ async function syncOnce() {
             }
         }
 
-        emit({ phase: 'pull', status: 'starting', pushed: report.pushed, deleted: report.deleted });
+        emit({ phase: 'pull', status: 'listing' });
 
         // --- Pull phase ---
         const remoteList = await fetchRemoteSkinnyList();
         const remoteMap = {};
         for (const r of remoteList) remoteMap[r.title] = r;
 
-        const localMap = db.getModifiedMap();  // {title: {modified, revision}}
+        const localMap = db.getModifiedMap();
 
-        // Detect remote-side changes we need to pull
         const toFetch = [];
         for (const title in remoteMap) {
             const r = remoteMap[title];
             const l = localMap[title];
             if (!l) {
-                toFetch.push(title);  // new remote tiddler
+                toFetch.push(title);
                 continue;
             }
-            // Compare modified timestamps
             const rMod = r.modified || '';
             const lMod = l.modified || '';
             if (rMod > lMod) {
@@ -251,9 +294,13 @@ async function syncOnce() {
             }
         }
 
-        // Parallel fetch
+        emit({ phase: 'pull', status: 'fetching', pullTotal: toFetch.length, pullDone: 0 });
+
+        // Parallel fetch with progress
         const CONCURRENCY = 10;
         const queue = toFetch.slice();
+        let processed = 0;
+        const totalToFetch = toFetch.length;
         async function worker() {
             while (queue.length > 0) {
                 const title = queue.shift();
@@ -267,6 +314,14 @@ async function syncOnce() {
                 } catch (e) {
                     report.errors.push({ title, op: 'pull', msg: e.message });
                 }
+                processed++;
+                if (processed % 10 === 0 || processed === totalToFetch) {
+                    emit({
+                        phase: 'pull', status: 'fetching',
+                        pullTotal: totalToFetch, pullDone: processed,
+                        errors: report.errors.length
+                    });
+                }
             }
         }
         const workers = [];
@@ -274,10 +329,8 @@ async function syncOnce() {
         await Promise.all(workers);
 
         // --- Detect remote deletions ---
-        // Tiddlers in local (not dirty) that don't exist remotely = deleted remotely
         for (const title in localMap) {
             if (!remoteMap[title]) {
-                // Only purge if local is clean (not edited)
                 const dirtyRow = db.getRaw().prepare('SELECT dirty FROM tiddlers WHERE title = ?').get(title);
                 if (dirtyRow && dirtyRow.dirty === 0) {
                     db.deleteTiddler(title, 'remote');
@@ -327,6 +380,49 @@ async function finalSync() {
     }
 }
 
+// Push-only sync for fast shutdown. Only pushes dirty tiddlers and deletions,
+// skips the pull phase (fetching remote list + comparing is the slow part).
+async function pushOnly() {
+    if (syncing) return { skipped: true, pushed: 0, deleted: 0 };
+    if (!config.isConfigured()) return { pushed: 0, deleted: 0 };
+
+    syncing = true;
+    const report = { pushed: 0, deleted: 0, errors: [] };
+
+    try {
+        const dirty = db.getDirty();
+        // Concurrent push
+        const CONCURRENCY = 5;
+        const queue = dirty.slice();
+        async function worker() {
+            while (queue.length > 0) {
+                const d = queue.shift();
+                if (!d) continue;
+                try {
+                    if (d.tombstone) {
+                        await pushDeletion(d.title);
+                        db.purgeTombstone(d.title);
+                        report.deleted++;
+                    } else {
+                        const newRev = await pushTiddler(d.title, d.fields);
+                        db.clearDirty(d.title, newRev);
+                        report.pushed++;
+                    }
+                } catch (e) {
+                    report.errors.push({ title: d.title, msg: e.message });
+                }
+            }
+        }
+        const workers = [];
+        for (let i = 0; i < CONCURRENCY; i++) workers.push(worker());
+        await Promise.all(workers);
+    } finally {
+        syncing = false;
+    }
+
+    return report;
+}
+
 function getStatus() {
     return {
         syncing,
@@ -338,6 +434,6 @@ function getStatus() {
 }
 
 module.exports = {
-    initialFullSync, isInitialSyncDone, syncOnce, start, stop, finalSync,
+    initialFullSync, isInitialSyncDone, syncOnce, start, stop, finalSync, pushOnly,
     getStatus, on
 };

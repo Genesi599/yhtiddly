@@ -10,10 +10,17 @@ contextBridge.exposeInMainWorld('twApi', {
     syncNow: () => ipcRenderer.invoke('sync-now'),
     getSyncStatus: () => ipcRenderer.invoke('get-sync-status'),
     resetLocalDb: () => ipcRenderer.invoke('reset-local-db'),
+    clearHttpCache: () => ipcRenderer.invoke('clear-http-cache'),
+    cacheStats: () => ipcRenderer.invoke('cache-stats'),
     closeSettings: () => ipcRenderer.send('close-settings'),
     onProgress: (cb) => {
         const listener = (_e, p) => cb(p);
         ipcRenderer.on('progress', listener);
         return () => ipcRenderer.removeListener('progress', listener);
+    },
+    onSyncStatus: (cb) => {
+        const listener = (_e, s) => cb(s);
+        ipcRenderer.on('sync-status', listener);
+        return () => ipcRenderer.removeListener('sync-status', listener);
     }
 });

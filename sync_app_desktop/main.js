@@ -60,31 +60,58 @@ function createMainWindow() {
 }
 
 function createSettingsWindow(onSaved) {
+    console.log('[settings] createSettingsWindow called');
     if (settingsWindow && !settingsWindow.isDestroyed()) {
+        console.log('[settings] reusing existing window, showing/focusing');
+        if (!settingsWindow.isVisible()) settingsWindow.show();
         settingsWindow.focus();
+        settingsWindow.moveTop();
         return;
     }
-    settingsWindow = new BrowserWindow({
-        width: 520,
-        height: 520,
-        title: '同步设置',
-        resizable: false,
-        minimizable: false,
-        maximizable: false,
-        parent: mainWindow || undefined,
-        modal: false,
-        webPreferences: {
-            preload: path.join(__dirname, 'preload.js'),
-            contextIsolation: true,
-            nodeIntegration: false
-        }
-    });
-    settingsWindow.setMenuBarVisibility(false);
-    settingsWindow.loadFile(path.join(__dirname, 'ui', 'settings.html'));
-    settingsWindow.on('closed', () => {
-        settingsWindow = null;
-        if (onSaved) onSaved();
-    });
+    try {
+        settingsWindow = new BrowserWindow({
+            width: 560,
+            height: 640,
+            title: '同步设置',
+            resizable: true,
+            minimizable: false,
+            maximizable: false,
+            alwaysOnTop: false,
+            skipTaskbar: false,
+            parent: undefined,  // don't tie to mainWindow — mainWindow may be hidden to tray
+            modal: false,
+            show: false,
+            webPreferences: {
+                preload: path.join(__dirname, 'preload.js'),
+                contextIsolation: true,
+                nodeIntegration: false
+            }
+        });
+        settingsWindow.setMenuBarVisibility(false);
+        const htmlPath = path.join(__dirname, 'ui', 'settings.html');
+        console.log('[settings] loading:', htmlPath);
+        settingsWindow.loadFile(htmlPath);
+        settingsWindow.once('ready-to-show', () => {
+            console.log('[settings] ready-to-show');
+            settingsWindow.show();
+            settingsWindow.focus();
+        });
+        settingsWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
+            console.error('[settings] did-fail-load', code, desc, url);
+            dialog.showErrorBox('设置窗口加载失败', desc + '\nURL: ' + url);
+        });
+        settingsWindow.webContents.on('render-process-gone', (_e, details) => {
+            console.error('[settings] render-process-gone', details);
+        });
+        settingsWindow.on('closed', () => {
+            console.log('[settings] closed');
+            settingsWindow = null;
+            if (onSaved) onSaved();
+        });
+    } catch (e) {
+        console.error('[settings] createSettingsWindow error:', e);
+        dialog.showErrorBox('无法打开设置窗口', e.message);
+    }
 }
 
 function createLoadingWindow() {
@@ -110,7 +137,7 @@ function createLoadingWindow() {
 // ---------- Tray ----------
 
 // Minimal 16x16 blue square PNG (base64). Used if ui/tray-icon.png isn't present.
-const FALLBACK_ICON_B64 = 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAS0lEQVR4Ae3UMQoAIAxDUe//b11EUHSqOiTwh0IhpXkEylqrHr4AoDvQB3oD0xv4A58OLBzYcmDLgV0HNh3YcGDNgRUHbnvhfY/pALqAZT95OxNxAAAAAElFTkSuQmCC';
+const FALLBACK_ICON_B64 = 'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAW0lEQVR4nO3XsQ0AIAwDQSZhWOZkF+goggQUAQfpI7n2NSmckrlcarsZ2/eseAl5XT4hpABV+UAACAvwPgD/AXY5Lbj2BQAAAAAAAIAc4BU9QD5MQgDk41Q5zztNwGm/kTSctgAAAABJRU5ErkJggg==';
 
 function createTray() {
     const iconPath = path.join(__dirname, 'ui', 'tray-icon.png');
@@ -202,11 +229,24 @@ function registerIpc() {
     ipcMain.handle('reset-local-db', () => {
         // Danger: wipe local cache (will trigger full re-sync)
         try {
-            db.getRaw().exec('DELETE FROM tiddlers; DELETE FROM meta;');
+            db.getRaw().exec('DELETE FROM tiddlers; DELETE FROM meta; DELETE FROM http_cache;');
             return { ok: true };
         } catch (e) {
             return { ok: false, error: e.message };
         }
+    });
+
+    ipcMain.handle('clear-http-cache', () => {
+        try {
+            db.cacheClear();
+            return { ok: true };
+        } catch (e) {
+            return { ok: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('cache-stats', () => {
+        try { return db.cacheStats(); } catch (e) { return { entries: 0, bytes: 0 }; }
     });
 
     ipcMain.on('close-settings', () => {
@@ -266,7 +306,13 @@ async function afterConfigured() {
 
     // Background sync
     sync.start();
-    sync.on(() => refreshTrayMenu());
+    sync.on((status) => {
+        refreshTrayMenu();
+        // Broadcast sync status to settings window (if open)
+        if (settingsWindow && !settingsWindow.isDestroyed()) {
+            settingsWindow.webContents.send('sync-status', status);
+        }
+    });
 
     // Main window
     createMainWindow();
@@ -276,15 +322,41 @@ async function afterConfigured() {
 
 // ---------- Shutdown ----------
 
+// Exit is fast by design:
+// - Push dirty tiddlers with a hard 3s budget (losing a push is OK; still
+//   marked dirty, next startup will retry). Don't bother pulling.
+// - Don't wait for HTTP server to drain — just kill it.
+// - Close SQLite (fast, WAL auto-checkpoints).
+
+function withTimeout(promise, ms) {
+    return Promise.race([
+        promise,
+        new Promise((resolve) => setTimeout(() => resolve('timeout'), ms))
+    ]);
+}
+
 async function quitApp() {
+    if (isQuittingForReal) return;
     isQuittingForReal = true;
     sync.stop();
+
+    // Give a PUSH-only final sync 3s max. Skip pull entirely.
     try {
-        await sync.finalSync();
+        await withTimeout(pushOnlyFinalSync(), 3000);
     } catch (e) { /* ignore */ }
-    try { await server.stop(); } catch (e) {}
-    db.close();
-    app.quit();
+
+    // Don't wait on server.stop() — just force-kill
+    try { server.forceStop(); } catch (e) {}
+
+    try { db.close(); } catch (e) {}
+
+    app.exit(0);  // app.exit is immediate; app.quit runs the normal lifecycle
+}
+
+async function pushOnlyFinalSync() {
+    // Only push dirty tiddlers, don't do the full sync pull (slow on remote)
+    const report = await sync.pushOnly();
+    console.log('[quit] pushed', report.pushed, 'deleted', report.deleted);
 }
 
 app.on('before-quit', (e) => {
