@@ -14,7 +14,12 @@ const DEFAULTS = {
     username: '',
     password: '',
     autoStart: false,
-    lastSyncTime: 0
+    lastSyncTime: 0,
+    // Where per-tiddler `.tid` files live. Empty string = use `{userData}/tiddlers/`.
+    // Users can point this at any folder they like (e.g. a synced Dropbox
+    // dir, or a TiddlyWiki `tiddlers/` folder they want to share with a
+    // standalone `tiddlywiki --load` run).
+    tiddlersDir: ''
 };
 
 function init(userDataDir) {
@@ -41,6 +46,7 @@ function load() {
     if (process.env.TW_USERNAME) cached.username = process.env.TW_USERNAME;
     if (process.env.TW_PASSWORD) cached.password = process.env.TW_PASSWORD;
     if (process.env.DB_PATH) cached.dbPath = process.env.DB_PATH;
+    if (process.env.TIDDLERS_DIR) cached.tiddlersDir = process.env.TIDDLERS_DIR;
 
     // Normalize remote URL
     if (cached.remoteUrl) {
@@ -62,7 +68,8 @@ function save(updates) {
         username: merged.username,
         password: merged.password,
         autoStart: merged.autoStart,
-        lastSyncTime: merged.lastSyncTime
+        lastSyncTime: merged.lastSyncTime,
+        tiddlersDir: merged.tiddlersDir || ''
     };
 
     fs.writeFileSync(configPath, JSON.stringify(toSave, null, 2), 'utf8');

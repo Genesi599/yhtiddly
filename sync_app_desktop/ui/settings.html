@@ -89,6 +89,17 @@
 </div>
 
 <div class="section">
+    <label>本地 tiddler 文件夹</label>
+    <div id="tiddlersDirPath" style="font-family:monospace; font-size:11px; color:#555; padding:4px 0; word-break:break-all;">-</div>
+    <div class="btnrow" style="margin-top:6px;">
+        <button id="btnOpenTiddlersDir">打开文件夹</button>
+    </div>
+    <div class="hint">
+        每条 tiddler 以单独的 <code>.tid</code> 文件存在这里，可以直接用编辑器打开、写脚本批处理、或者让 AI 工具读写。改动下次启动时会被识别并推送到远程。
+    </div>
+</div>
+
+<div class="section">
     <label>维护</label>
     <div class="btnrow">
         <button id="btnSyncNow">立即同步</button>
@@ -260,6 +271,21 @@
         $('cacheInfo').textContent = '页面缓存：' + stats.entries + ' 条，' + mb + ' MB';
     }
     refreshCacheInfo();
+
+    async function refreshTiddlersDir() {
+        try {
+            const r = await window.twApi.getTiddlersDir();
+            $('tiddlersDirPath').textContent = r && r.path ? r.path : '(未初始化)';
+        } catch (e) {
+            $('tiddlersDirPath').textContent = '(读取失败: ' + e.message + ')';
+        }
+    }
+    refreshTiddlersDir();
+
+    $('btnOpenTiddlersDir').onclick = async () => {
+        const r = await window.twApi.openTiddlersDir();
+        if (r && r.error) setStatus('打开失败: ' + r.error, 'err');
+    };
 })();
 </script>
 

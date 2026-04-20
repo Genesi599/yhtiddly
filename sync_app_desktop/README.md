@@ -53,14 +53,45 @@ npm start
 ## 数据位置
 
 - **配置**：`{userData}/config.json`
-- **数据库**：`{userData}/tiddlers.db`
+- **SQLite 索引 + HTTP 缓存**：`{userData}/tiddlers.db`
+- **Tiddler 文件**：`{userData}/tiddlers/`（可在设置里改到任意目录）
 
 `{userData}` 的具体路径：
 - Windows: `%APPDATA%\tw-sync-desktop\`
 - macOS: `~/Library/Application Support/tw-sync-desktop/`
 - Linux: `~/.config/tw-sync-desktop/`
 
-数据库可以直接用 SQLite 工具打开查看。
+### 单文件存储
+
+每条 tiddler 是目录下一个独立的 `.tid` 文件，格式就是 TiddlyWiki 原生的 `.tid`：
+
+```
+title: $:/config/Foo
+modified: 20240101000000
+tags: mytag [[tag with space]]
+type: text/vnd.tiddlywiki
+
+这里是正文内容。
+```
+
+文件名映射规则跟 TW 的 `--savewikifolder` 一致：`$:/foo/bar` → `$__foo_bar.tid`，普通 `/` → `_`，Windows 禁用字符 → `_`。
+
+**为什么单文件**：
+
+- 任何编辑器（VSCode、Obsidian、Notepad）都能直接打开改内容，保存后下次启动自动检测并同步推送到远程
+- 写个脚本批量处理：`ls tiddlers/*.tid | xargs grep tag:`
+- 让 AI 工具（Cursor、Copilot、Claude）直接读写这个目录——比 SQLite blob 友好一万倍
+- 直接把这个目录当作 `tiddlywiki --load` 的输入，离线用原生 TW 也能跑
+
+SQLite 只存索引（title → filename、revision、dirty 状态）和代理缓存，不是数据主存。
+
+### 启动时 reconcile
+
+每次启动会扫描一遍 tiddlers 目录：
+
+- 新文件（用户手动添加的）→ 自动注册，标为 dirty，下次同步推送
+- 已有文件但 `modified` 比索引新（用户改过了）→ 刷新索引，标为 dirty
+- 索引有记录但文件消失 → 保守处理，只记日志不删（可能是用户误删，等你手动恢复）
 
 ## 环境变量（覆盖配置文件）
 
@@ -71,6 +102,7 @@ SYNC_INTERVAL       同步间隔（毫秒）
 TW_USERNAME         远程用户名
 TW_PASSWORD         远程密码
 DB_PATH             数据库路径
+TIDDLERS_DIR        Tiddler 文件目录（覆盖默认的 userData/tiddlers）
 ```
 
 ## 打包分发
@@ -119,7 +151,8 @@ sync_app_desktop/
 ├── package.json        依赖 + 脚本
 ├── main.js             Electron 主进程
 ├── server.js           Express API 服务
-├── db.js               SQLite 封装
+├── db.js               SQLite 索引（title→filename + sync 状态）
+├── tiddlerStore.js     单文件 .tid 存储（读写 + 文件名映射）
 ├── sync.js             后台同步逻辑
 ├── config.js           配置管理
 ├── preload.js          IPC 桥接
@@ -130,3 +163,9 @@ sync_app_desktop/
 │   └── tray-icon.png   托盘图标（gen-icon.js 生成）
 └── README.md
 ```
+
+## v1 → v2 迁移
+
+旧版把 tiddler 以 JSON blob 存在 SQLite `tiddlers.fields` 列里。v2 启动时会自动检测 v1 的 schema，把每行的 blob 写成 `.tid` 文件，再重建索引表。迁移是幂等的——第二次启动已经是 v2 schema，就不会重做。
+
+如果迁移出了问题，删掉 `{userData}/tiddlers.db` 和 `{userData}/tiddlers/` 重新启动即可全量重拉。

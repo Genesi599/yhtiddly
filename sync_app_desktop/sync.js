@@ -53,13 +53,10 @@ async function fetchRemoteSkinnyList() {
     return res.json();  // array of {title, modified, revision, ...}
 }
 
-function normalizeTiddlerResponse(data, knownTitle) {
-    // TW server returns the tiddler's field object, sometimes wrapped in {revision, fields},
-    // and often WITHOUT an explicit "title" field (since title is in the URL).
-    // We inject the title we already know so downstream code works.
+function normalizeTiddlerResponse(data, knownTitle, revisionOverride) {
     if (!data) return null;
     let fields;
-    let revision = data.revision || '0';
+    let revision = revisionOverride || data.revision || null;
     if (data.fields && typeof data.fields === 'object') {
         fields = data.fields;
     } else if (typeof data === 'object') {
@@ -71,6 +68,27 @@ function normalizeTiddlerResponse(data, knownTitle) {
     return { revision, fields };
 }
 
+// Parse TW modified timestamp to epoch ms. Handles both formats:
+//   - TW compact: "20240101120000000" (YYYYMMDDHHmmssSSS)
+//   - ISO 8601:   "2024-01-01T12:00:00.000Z"
+// Returns 0 for missing/unparseable values (so they sort as "oldest").
+function parseModified(s) {
+    if (!s) return 0;
+    const str = String(s);
+    const m = str.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(\d{3})?$/);
+    if (m) {
+        return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], +(m[7] || 0));
+    }
+    const t = Date.parse(str);
+    return isNaN(t) ? 0 : t;
+}
+
+function revisionFromEtag(etag) {
+    if (!etag) return null;
+    const m = etag.match(/"[^/]+\/[^/]+\/(\d+):/);
+    return m ? m[1] : null;
+}
+
 async function fetchRemoteTiddlerOnce(title) {
     const url = remoteUrl('/recipes/default/tiddlers/' + encodeURIComponent(title));
     const res = await fetch(url, { headers: defaultHeaders(), timeout: 30000 });
@@ -80,15 +98,17 @@ async function fetchRemoteTiddlerOnce(title) {
         if (bagRes.status === 404) return null;
         if (!bagRes.ok) throw new Error('HTTP ' + bagRes.status + ' (bag fallback)');
         const bagText = await bagRes.text();
-        try { return normalizeTiddlerResponse(JSON.parse(bagText), title); }
+        const rev = revisionFromEtag(bagRes.headers.get('etag'));
+        try { return normalizeTiddlerResponse(JSON.parse(bagText), title, rev); }
         catch (e) { throw new Error('bad JSON (bag): ' + bagText.slice(0, 80)); }
     }
     if (!res.ok) throw new Error('HTTP ' + res.status);
+    const rev = revisionFromEtag(res.headers.get('etag'));
     const text = await res.text();
     let data;
     try { data = JSON.parse(text); }
     catch (e) { throw new Error('bad JSON: ' + text.slice(0, 80)); }
-    return normalizeTiddlerResponse(data, title);
+    return normalizeTiddlerResponse(data, title, rev);
 }
 
 // Wrap with retries (3 attempts, exponential backoff)
@@ -255,10 +275,12 @@ async function syncOnce() {
             emit({ phase: 'push', status: 'pushing', pushTotal: dirty.length, pushDone: i });
             try {
                 if (d.tombstone) {
+                    console.log('[sync] push delete:', d.title);
                     await pushDeletion(d.title);
                     db.purgeTombstone(d.title);
                     report.deleted++;
                 } else {
+                    console.log('[sync] push update:', d.title);
                     const newRev = await pushTiddler(d.title, d.fields);
                     db.clearDirty(d.title, newRev);
                     report.pushed++;
@@ -285,11 +307,12 @@ async function syncOnce() {
                 toFetch.push(title);
                 continue;
             }
-            const rMod = r.modified || '';
-            const lMod = l.modified || '';
+            const rMod = parseModified(r.modified);
+            const lMod = parseModified(l.modified);
             if (rMod > lMod) {
                 toFetch.push(title);
-            } else if (r.revision && l.revision && r.revision !== l.revision && rMod >= lMod) {
+            } else if (r.revision && l.revision && l.revision !== '0' &&
+                       r.revision !== l.revision && rMod >= lMod) {
                 toFetch.push(title);
             }
         }
@@ -333,6 +356,7 @@ async function syncOnce() {
             if (!remoteMap[title]) {
                 const dirtyRow = db.getRaw().prepare('SELECT dirty FROM tiddlers WHERE title = ?').get(title);
                 if (dirtyRow && dirtyRow.dirty === 0) {
+                    console.log('[sync] remote delete detected:', title);
                     db.deleteTiddler(title, 'remote');
                     report.removed++;
                 }

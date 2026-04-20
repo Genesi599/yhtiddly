@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>同步控制台</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+    background: #f0f2f5;
+    color: #222;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* ── Header ─────────────────────────────────── */
+.header {
+    background: #1a1f2e;
+    color: #fff;
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+.header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.3px; }
+.header .remote { font-size: 11px; color: #8899bb; margin-top: 2px; font-family: monospace; }
+.header-left { flex: 1; }
+.status-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 12px;
+}
+.dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #666;
+    flex-shrink: 0;
+}
+.dot.idle   { background: #4caf50; }
+.dot.syncing { background: #2196f3; animation: pulse 1s infinite; }
+.dot.error  { background: #f44336; }
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.4; }
+}
+
+/* ── Stats row ───────────────────────────────── */
+.stats-row {
+    display: flex;
+    gap: 12px;
+    padding: 14px 20px 0;
+    flex-shrink: 0;
+}
+.stat-card {
+    flex: 1;
+    background: #fff;
+    border-radius: 8px;
+    padding: 12px 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+.stat-value { font-size: 28px; font-weight: 700; color: #1a1f2e; line-height: 1; }
+.stat-value.warn { color: #e67e00; }
+.stat-label { font-size: 11px; color: #888; margin-top: 4px; }
+
+/* ── Action bar ──────────────────────────────── */
+.action-bar {
+    display: flex;
+    gap: 8px;
+    padding: 12px 20px;
+    flex-shrink: 0;
+}
+button {
+    padding: 7px 16px;
+    border: 1px solid #d0d4db;
+    background: #fff;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: inherit;
+    color: #333;
+    transition: background 0.15s;
+}
+button:hover { background: #f0f2f5; }
+button:active { background: #e8eaed; }
+button.primary {
+    background: #2c5eff;
+    color: #fff;
+    border-color: #2c5eff;
+    font-weight: 500;
+}
+button.primary:hover { background: #1a4eee; }
+button.primary:disabled {
+    background: #7faeff;
+    border-color: #7faeff;
+    cursor: default;
+}
+
+/* ── Progress ────────────────────────────────── */
+.progress-area {
+    margin: 0 20px;
+    background: #fff;
+    border-radius: 8px;
+    padding: 12px 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    flex-shrink: 0;
+}
+.progress-area.hidden { display: none; }
+.progress-phase { font-size: 12px; color: #444; margin-bottom: 8px; }
+.progress-track {
+    height: 6px;
+    background: #e8eaed;
+    border-radius: 3px;
+    overflow: hidden;
+}
+.progress-bar {
+    height: 100%;
+    width: 0%;
+    background: #2c5eff;
+    border-radius: 3px;
+    transition: width 0.25s ease;
+}
+.progress-bar.done { background: #4caf50; }
+.progress-bar.err  { background: #f44336; }
+.progress-counts { font-size: 11px; color: #888; margin-top: 6px; }
+
+/* ── Content area ────────────────────────────── */
+.content-area {
+    display: flex;
+    gap: 12px;
+    padding: 12px 20px;
+    flex: 1;
+    min-height: 0;
+}
+
+.panel {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+.panel.dirty  { flex: 0 0 320px; }
+.panel.recent { flex: 1; }
+
+.panel-header {
+    display: flex;
+    align-items: center;
+    padding: 10px 14px;
+    border-bottom: 1px solid #f0f0f0;
+    flex-shrink: 0;
+}
+.panel-title { font-weight: 600; font-size: 12px; color: #444; text-transform: uppercase; letter-spacing: 0.5px; }
+.badge {
+    margin-left: 8px;
+    background: #e8eaed;
+    color: #555;
+    border-radius: 10px;
+    padding: 1px 7px;
+    font-size: 11px;
+    font-weight: 600;
+}
+.badge.warn { background: #fff3e0; color: #e67e00; }
+
+.list-area {
+    overflow-y: auto;
+    flex: 1;
+    padding: 6px 0;
+}
+.list-item {
+    display: flex;
+    align-items: center;
+    padding: 6px 14px;
+    gap: 8px;
+    border-bottom: 1px solid #fafafa;
+    min-width: 0;
+}
+.list-item:hover { background: #f7f8fa; }
+.list-item .title {
+    flex: 1;
+    font-family: monospace;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #222;
+}
+.list-item .meta {
+    font-size: 11px;
+    color: #aaa;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+.tag-tombstone {
+    background: #fce8e8;
+    color: #c0392b;
+    font-size: 10px;
+    border-radius: 4px;
+    padding: 1px 5px;
+    flex-shrink: 0;
+}
+.tag-dirty {
+    background: #fff3e0;
+    color: #e67e00;
+    font-size: 10px;
+    border-radius: 4px;
+    padding: 1px 5px;
+    flex-shrink: 0;
+}
+.empty-hint {
+    padding: 24px 14px;
+    text-align: center;
+    color: #bbb;
+    font-size: 12px;
+}
+
+/* ── Log panel ───────────────────────────────── */
+.log-panel {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    margin: 0 20px 14px;
+    flex-shrink: 0;
+    max-height: 120px;
+    display: flex;
+    flex-direction: column;
+}
+.log-list {
+    overflow-y: auto;
+    flex: 1;
+    padding: 4px 0;
+}
+.log-entry {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 5px 14px;
+    font-size: 11px;
+    border-bottom: 1px solid #fafafa;
+}
+.log-time { color: #aaa; flex-shrink: 0; font-family: monospace; }
+.log-stats { flex: 1; color: #444; }
+.log-stats .up { color: #2196f3; }
+.log-stats .down { color: #4caf50; }
+.log-stats .err { color: #f44336; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+    <div class="header-left">
+        <h1>TiddlyWiki 同步控制台</h1>
+        <div class="remote" id="remoteUrl">-</div>
+    </div>
+    <div class="status-pill">
+        <div class="dot" id="statusDot"></div>
+        <span id="statusText">加载中…</span>
+    </div>
+</div>
+
+<!-- Stats -->
+<div class="stats-row">
+    <div class="stat-card">
+        <div class="stat-value" id="totalCount">-</div>
+        <div class="stat-label">本地条目总数</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="dirtyCount">-</div>
+        <div class="stat-label">待上传</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="lastSync">-</div>
+        <div class="stat-label">上次同步</div>
+    </div>
+</div>
+
+<!-- Actions -->
+<div class="action-bar">
+    <button id="btnSync" class="primary">立即同步</button>
+    <button id="btnOpenDir">打开文件夹</button>
+    <button id="btnOpenTW">打开 TiddlyWiki</button>
+    <button id="btnReload">刷新 Wiki</button>
+    <button id="btnSettings">设置</button>
+    <div id="syncMsg" style="margin-left:8px; font-size:12px; color:#888; align-self:center;"></div>
+</div>
+
+<!-- Progress -->
+<div class="progress-area hidden" id="progressArea">
+    <div class="progress-phase" id="progressPhase">-</div>
+    <div class="progress-track">
+        <div class="progress-bar" id="progressBar"></div>
+    </div>
+    <div class="progress-counts" id="progressCounts"></div>
+</div>
+
+<!-- Content columns -->
+<div class="content-area">
+    <div class="panel dirty">
+        <div class="panel-header">
+            <span class="panel-title">待上传</span>
+            <span class="badge warn" id="dirtyBadge">0</span>
+        </div>
+        <div class="list-area" id="dirtyList">
+            <div class="empty-hint">暂无待上传的条目</div>
+        </div>
+    </div>
+    <div class="panel recent">
+        <div class="panel-header">
+            <span class="panel-title">最近修改</span>
+        </div>
+        <div class="list-area" id="recentList">
+            <div class="empty-hint">暂无条目</div>
+        </div>
+    </div>
+</div>
+
+<!-- Sync log -->
+<div class="log-panel">
+    <div class="panel-header" style="padding:8px 14px;">
+        <span class="panel-title">同步记录</span>
+    </div>
+    <div class="log-list" id="syncLog">
+        <div class="empty-hint">暂无同步记录</div>
+    </div>
+</div>
+
+<script>
+(function () {
+    const $ = id => document.getElementById(id);
+    const api = window.twApi;
+
+    // ── Utilities ──────────────────────────────────────────────────────
+    function relTime(ms) {
+        if (!ms) return '-';
+        const diff = Date.now() - ms;
+        if (diff < 5000)   return '刚刚';
+        if (diff < 60000)  return Math.round(diff / 1000) + ' 秒前';
+        if (diff < 3600000) return Math.round(diff / 60000) + ' 分钟前';
+        if (diff < 86400000) return Math.round(diff / 3600000) + ' 小时前';
+        return Math.round(diff / 86400000) + ' 天前';
+    }
+
+    function fmtModified(s) {
+        if (!s) return '';
+        // TW compact format: 20240101120000000
+        const m = s.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})/);
+        if (m) return m[1] + '-' + m[2] + '-' + m[3] + ' ' + m[4] + ':' + m[5];
+        // ISO
+        try { return new Date(s).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }); }
+        catch (e) { return s.slice(0, 16); }
+    }
+
+    function esc(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // ── Render helpers ─────────────────────────────────────────────────
+    function renderDirtyList(items) {
+        const el = $('dirtyList');
+        $('dirtyBadge').textContent = items.length;
+        $('dirtyBadge').className = 'badge' + (items.length > 0 ? ' warn' : '');
+        if (!items.length) {
+            el.innerHTML = '<div class="empty-hint">暂无待上传的条目 ✓</div>';
+            return;
+        }
+        el.innerHTML = items.map(r => `
+            <div class="list-item">
+                <span class="title" title="${esc(r.title)}">${esc(r.title)}</span>
+                ${r.tombstone ? '<span class="tag-tombstone">删除</span>' : '<span class="tag-dirty">修改</span>'}
+                <span class="meta">${fmtModified(r.modified)}</span>
+            </div>`).join('');
+    }
+
+    function renderRecentList(items) {
+        const el = $('recentList');
+        if (!items.length) {
+            el.innerHTML = '<div class="empty-hint">暂无条目</div>';
+            return;
+        }
+        el.innerHTML = items.map(r => `
+            <div class="list-item">
+                <span class="title" title="${esc(r.title)}">${esc(r.title)}</span>
+                <span class="meta">${fmtModified(r.modified)}</span>
+            </div>`).join('');
+    }
+
+    function renderSyncLog(entries) {
+        const el = $('syncLog');
+        if (!entries.length) {
+            el.innerHTML = '<div class="empty-hint">暂无同步记录</div>';
+            return;
+        }
+        el.innerHTML = entries.map(e => {
+            const parts = [];
+            if (e.pushed)  parts.push(`<span class="up">↑${e.pushed}</span>`);
+            if (e.pulled)  parts.push(`<span class="down">↓${e.pulled}</span>`);
+            if (e.removed) parts.push(`<span>移除 ${e.removed}</span>`);
+            if (e.errors)  parts.push(`<span class="err">失败 ${e.errors}</span>`);
+            const stats = parts.length ? parts.join(' &nbsp;') : '无变更';
+            return `<div class="log-entry">
+                <span class="log-time">${relTime(e.time)}</span>
+                <span class="log-stats">${stats}</span>
+            </div>`;
+        }).join('');
+    }
+
+    function applyStatus(status) {
+        const dot  = $('statusDot');
+        const txt  = $('statusText');
+        const dCnt = $('dirtyCount');
+
+        dCnt.textContent = status.dirtyCount;
+        dCnt.className = 'stat-value' + (status.dirtyCount > 0 ? ' warn' : '');
+        $('totalCount').textContent = status.totalTiddlers;
+        $('lastSync').textContent = relTime(status.lastSync) || '-';
+
+        if (status.syncing) {
+            dot.className = 'dot syncing';
+            txt.textContent = '同步中…';
+        } else {
+            dot.className = 'dot idle';
+            txt.textContent = '已连接';
+        }
+    }
+
+    // ── Initial load ───────────────────────────────────────────────────
+    async function refresh() {
+        const data = await api.getDashboardData();
+        $('remoteUrl').textContent = data.remoteUrl || '（未配置）';
+        applyStatus(data.status);
+        renderDirtyList(data.dirtyList || []);
+        renderRecentList(data.recentTiddlers || []);
+        renderSyncLog(data.syncLog || []);
+    }
+    refresh();
+
+    // Auto-refresh stats every 10s when idle
+    setInterval(async () => {
+        if (!syncInProgress) {
+            const data = await api.getDashboardData();
+            applyStatus(data.status);
+            renderDirtyList(data.dirtyList || []);
+            renderSyncLog(data.syncLog || []);
+        }
+    }, 10000);
+
+    // ── Sync progress live updates ─────────────────────────────────────
+    let syncInProgress = false;
+
+    api.onSyncStatus(s => {
+        const area = $('progressArea');
+        const bar  = $('progressBar');
+        const phase = $('progressPhase');
+        const counts = $('progressCounts');
+
+        if (s.phase === 'idle' && s.status === 'done') {
+            bar.style.width = '100%';
+            bar.className = 'progress-bar done';
+            phase.textContent = '同步完成';
+            syncInProgress = false;
+            $('btnSync').disabled = false;
+            $('syncMsg').textContent = '';
+            setTimeout(() => {
+                area.classList.add('hidden');
+                bar.className = 'progress-bar';
+                refresh();
+            }, 1800);
+            return;
+        }
+
+        if (s.phase === 'idle' && s.status === 'error') {
+            bar.className = 'progress-bar err';
+            phase.textContent = '出错：' + (s.error || '');
+            syncInProgress = false;
+            $('btnSync').disabled = false;
+            return;
+        }
+
+        area.classList.remove('hidden');
+        syncInProgress = true;
+
+        if (s.phase === 'push') {
+            const t = s.pushTotal || 0, d = s.pushDone || 0;
+            phase.textContent = '上传本地修改…';
+            bar.style.width = t > 0 ? Math.round(d / t * 100) + '%' : '5%';
+            counts.textContent = t > 0 ? (d + ' / ' + t) : '';
+        } else if (s.phase === 'pull') {
+            if (s.status === 'listing') {
+                phase.textContent = '获取远程列表…';
+                bar.style.width = '15%';
+                counts.textContent = '';
+            } else if (s.status === 'fetching') {
+                const t = s.pullTotal || 0, d = s.pullDone || 0;
+                phase.textContent = '下载更新…';
+                bar.style.width = t > 0 ? Math.round(40 + d / t * 60) + '%' : '50%';
+                counts.textContent = d + ' / ' + t + (s.errors ? '，失败 ' + s.errors : '');
+            }
+        }
+    });
+
+    // ── Buttons ────────────────────────────────────────────────────────
+    $('btnSync').onclick = async () => {
+        $('btnSync').disabled = true;
+        $('syncMsg').textContent = '同步中…';
+        const r = await api.syncNow();
+        $('btnSync').disabled = false;
+        if (r && r.error) {
+            $('syncMsg').textContent = '失败: ' + r.error;
+        } else if (r) {
+            const errs = (r.errors || []).length;
+            $('syncMsg').textContent = '↑' + (r.pushed || 0) + ' ↓' + (r.pulled || 0) +
+                (errs ? ' 失败' + errs : '');
+        }
+        refresh();
+    };
+
+    $('btnReload').onclick = async () => {
+        await api.reloadWiki();
+    };
+
+    $('btnOpenDir').onclick = async () => {
+        await api.openTiddlersDir();
+    };
+
+    $('btnOpenTW').onclick = async () => {
+        await api.openBrowser();
+    };
+
+    $('btnSettings').onclick = async () => {
+        await api.openSettings();
+    };
+})();
+</script>
+</body>
+</html>

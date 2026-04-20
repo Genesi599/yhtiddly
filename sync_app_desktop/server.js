@@ -40,15 +40,15 @@ function buildApp() {
         });
     });
 
-    // --- List all tiddlers (skinny) ---
+    // --- List all tiddlers (fat — no lazy-loading needed) ---
+    // _fileCache is pre-warmed at startup so listFull() is instant (no disk reads).
     app.get('/recipes/default/tiddlers.json', (req, res) => {
-        const list = db.listSkinny();
-        res.json(list);
+        res.json(db.listFull());
     });
 
     // --- GET single tiddler (full, with text) ---
     app.get('/recipes/default/tiddlers/:title', (req, res) => {
-        const title = decodeURIComponent(req.params.title);
+        let title; try { title = decodeURIComponent(req.params.title); } catch(e) { title = req.params.title; }
         const t = db.getTiddler(title);
         if (!t) return res.status(404).end();
         // TW expects the fields object with Etag-like revision
@@ -58,7 +58,7 @@ function buildApp() {
 
     // --- PUT tiddler (save) ---
     app.put('/recipes/default/tiddlers/:title', (req, res) => {
-        const title = decodeURIComponent(req.params.title);
+        let title; try { title = decodeURIComponent(req.params.title); } catch(e) { title = req.params.title; }
         try {
             let fields;
             if (Buffer.isBuffer(req.body) && req.body.length) {
@@ -94,7 +94,7 @@ function buildApp() {
 
     // --- DELETE tiddler ---
     app.delete('/bags/default/tiddlers/:title', (req, res) => {
-        const title = decodeURIComponent(req.params.title);
+        let title; try { title = decodeURIComponent(req.params.title); } catch(e) { title = req.params.title; }
         db.deleteTiddler(title, 'local');
         res.status(204).end();
     });
@@ -215,13 +215,65 @@ function buildApp() {
         }
     }
 
+    // Inject a tiny script just before the <script> that contains $tw.boot.boot()
+    // (boot.js). This fires synchronously during TW's boot sequence, after
+    // bootprefix.js has set window.$tw but before boot.js creates $tw.syncer.
+    //
+    // We install an Object.defineProperty setter on $tw.syncer so that the
+    // instant TW assigns it ($tw.syncer = new Syncer(...)), we patch
+    // storeTiddler to NOT mark fat tiddlers (those with text) as needing
+    // lazy-loading. Without this patch, TW's tiddlyweb adaptor unconditionally
+    // calls storeTiddler(fields, isSkinny=true), causing 18000+ lazy-load XHRs.
+    //
+    // Finding the injection point by searching for '$tw.boot.boot()' is robust
+    // across all TW server versions regardless of <script> tag attributes.
+    function maybeInjectPatch(body, headers) {
+        const ct = (headers['content-type'] || headers['Content-Type'] || '').toLowerCase();
+        if (!ct.includes('text/html')) return body;
+        let text;
+        try { text = body.toString('utf8'); } catch (e) { return body; }
+
+        // Find the <script> block containing $tw.boot.boot() — the boot entry point
+        const bootCallIdx = text.indexOf('$tw.boot.boot()');
+        if (bootCallIdx < 0) {
+            console.warn('[server] maybeInjectPatch: $tw.boot.boot() not found in HTML — patch skipped');
+            return body;
+        }
+
+        // Walk backwards to find the opening <script tag of that block
+        const scriptTagIdx = text.lastIndexOf('<script', bootCallIdx);
+        if (scriptTagIdx < 0) return body;
+
+        const script = '<script>(function(){' +
+            'if(!window.$tw)return;' +
+            'Object.defineProperty($tw,"syncer",{configurable:true,enumerable:true,' +
+                'get:function(){return $tw.__syncer__;},' +
+                'set:function(v){' +
+                    '$tw.__syncer__=v;' +
+                    'if(!v)return;' +
+                    // Treat tiddlers with text as fat (not skinny) → no lazy-load requests
+                    'var orig=v.storeTiddler.bind(v);' +
+                    'v.storeTiddler=function(f,s){return orig.call(this,f,s&&!("text"in f));};' +
+                    // Disable TW's own polling — sync.js handles server sync
+                    'v.syncFromServerInterval=999999999;' +
+                    'if(v.pollTimerId){clearTimeout(v.pollTimerId);v.pollTimerId=null;}' +
+                    'console.log("[patch] storeTiddler patched");' +
+                '}' +
+            '});' +
+        '})();</script>\n';
+        const out = text.slice(0, scriptTagIdx) + script + text.slice(scriptTagIdx);
+        return Buffer.from(out, 'utf8');
+    }
+
     function serveFromCache(res, cached) {
         res.status(cached.status);
+        const body = maybeInjectPatch(cached.body, cached.headers);
         for (const k of Object.keys(cached.headers)) {
+            if (k.toLowerCase() === 'content-length') continue;
             res.set(k, cached.headers[k]);
         }
         res.set('X-TW-Cache', 'HIT');
-        res.send(cached.body);
+        res.send(body);
     }
 
     app.use(async (req, res) => {
@@ -278,9 +330,12 @@ function buildApp() {
                     updatedAt: now
                 });
                 res.status(upstream.status);
-                for (const k of Object.keys(headers)) res.set(k, headers[k]);
+                for (const k of Object.keys(headers)) {
+                    if (k.toLowerCase() === 'content-length') continue;
+                    res.set(k, headers[k]);
+                }
                 res.set('X-TW-Cache', 'MISS');
-                res.send(body);
+                res.send(maybeInjectPatch(body, headers));
             } else {
                 // Not cacheable: just stream through
                 res.status(upstream.status);

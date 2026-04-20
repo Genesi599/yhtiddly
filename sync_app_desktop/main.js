@@ -19,9 +19,17 @@ const sync = require('./sync');
 
 let mainWindow = null;
 let settingsWindow = null;
+let dashboardWindow = null;
 let loadingWindow = null;
 let tray = null;
 let isQuittingForReal = false;
+
+// Circular buffer of the last 20 completed sync reports for the dashboard log.
+const syncLog = [];
+function addSyncLog(entry) {
+    syncLog.unshift(entry);
+    if (syncLog.length > 20) syncLog.length = 20;
+}
 
 // ---------- Window factories ----------
 
@@ -46,6 +54,41 @@ function createMainWindow() {
     mainWindow.loadURL(url);
     mainWindow.setMenuBarVisibility(false);
 
+    // Patch TW's syncer before it processes tiddlers.json:
+    // - storeTiddler is always called with isSkinny=true by the tiddlyweb adaptor,
+    //   even for fat tiddlers. We fix this so tiddlers with text skip lazy loading.
+    // - Also disable TW's own sync polling (our sync.js handles sync externally).
+    mainWindow.webContents.on('did-finish-load', () => {
+        mainWindow.webContents.executeJavaScript(`
+            (function patchSyncer() {
+                if (!window.$tw || !$tw.syncer) { setTimeout(patchSyncer, 50); return; }
+                var orig = $tw.syncer.storeTiddler.bind($tw.syncer);
+                $tw.syncer.storeTiddler = function(tiddlerFields, isSkinny) {
+                    // If tiddler already has text, don't mark it for lazy-loading
+                    return orig.call(this, tiddlerFields, isSkinny && !('text' in tiddlerFields));
+                };
+                // Disable TW's sync polling — sync.js handles sync externally
+                $tw.syncer.syncFromServerInterval = 999999999;
+                if ($tw.syncer.pollTimerId) { clearTimeout($tw.syncer.pollTimerId); $tw.syncer.pollTimerId = null; }
+                console.log('[patch] storeTiddler patched, sync polling disabled');
+            })();
+        `).catch(() => {});
+    });
+
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+        if (input.type !== 'keyDown') return;
+        if (input.key === 'F12') {
+            mainWindow.webContents.toggleDevTools();
+            event.preventDefault();
+        } else if ((input.control || input.meta) && input.shift && input.key.toLowerCase() === 'i') {
+            mainWindow.webContents.toggleDevTools();
+            event.preventDefault();
+        } else if ((input.control || input.meta) && input.key.toLowerCase() === 'r' && !input.shift) {
+            mainWindow.webContents.reload();
+            event.preventDefault();
+        }
+    });
+
     // Close to tray instead of quitting
     mainWindow.on('close', (e) => {
         if (!isQuittingForReal) {
@@ -54,6 +97,9 @@ function createMainWindow() {
             if (process.platform === 'darwin') app.dock.hide();
         }
     });
+
+    // Preload happens server-side via HTML rewrite (server.js injects
+    // $tw.preloadTiddlers into <head>), so TW boots with full text already.
 
     mainWindow.on('closed', () => { mainWindow = null; });
     return mainWindow;
@@ -112,6 +158,29 @@ function createSettingsWindow(onSaved) {
         console.error('[settings] createSettingsWindow error:', e);
         dialog.showErrorBox('无法打开设置窗口', e.message);
     }
+}
+
+function createDashboardWindow() {
+    if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+        if (!dashboardWindow.isVisible()) dashboardWindow.show();
+        dashboardWindow.focus();
+        return dashboardWindow;
+    }
+    dashboardWindow = new BrowserWindow({
+        width: 920,
+        height: 700,
+        title: '同步控制台',
+        icon: path.join(__dirname, 'ui', 'tray-icon.png'),
+        webPreferences: {
+            preload: path.join(__dirname, 'preload.js'),
+            contextIsolation: true,
+            nodeIntegration: false
+        }
+    });
+    dashboardWindow.setMenuBarVisibility(false);
+    dashboardWindow.loadFile(path.join(__dirname, 'ui', 'dashboard.html'));
+    dashboardWindow.on('closed', () => { dashboardWindow = null; });
+    return dashboardWindow;
 }
 
 function createLoadingWindow() {
@@ -182,6 +251,7 @@ function refreshTrayMenu() {
             try { await sync.syncOnce(); refreshTrayMenu(); }
             catch (e) { dialog.showErrorBox('同步失败', e.message); }
         }},
+        { label: '控制台…', click: () => createDashboardWindow() },
         { label: '设置…', click: () => createSettingsWindow() },
         { type: 'separator' },
         { label: '退出', click: () => quitApp() }
@@ -227,10 +297,28 @@ function registerIpc() {
     ipcMain.handle('get-sync-status', () => sync.getStatus());
 
     ipcMain.handle('reset-local-db', () => {
-        // Danger: wipe local cache (will trigger full re-sync)
+        // Danger: wipe local cache — both the SQLite index AND the .tid
+        // files on disk — then the next startup will re-pull everything
+        // from remote. Doing this atomically (db.wipeAll) rather than a
+        // raw SQL DELETE so files don't linger as zombies.
         try {
-            db.getRaw().exec('DELETE FROM tiddlers; DELETE FROM meta; DELETE FROM http_cache;');
+            db.wipeAll();
             return { ok: true };
+        } catch (e) {
+            return { ok: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('get-tiddlers-dir', () => {
+        try { return { path: db.getRaw() ? require('./tiddlerStore').getDir() : null }; }
+        catch (e) { return { path: null, error: e.message }; }
+    });
+
+    ipcMain.handle('open-tiddlers-dir', () => {
+        try {
+            const p = require('./tiddlerStore').getDir();
+            shell.openPath(p);
+            return { ok: true, path: p };
         } catch (e) {
             return { ok: false, error: e.message };
         }
@@ -252,6 +340,36 @@ function registerIpc() {
     ipcMain.on('close-settings', () => {
         if (settingsWindow) settingsWindow.close();
     });
+
+    ipcMain.handle('get-dashboard-data', () => {
+        const status = sync.getStatus();
+        const cfg = config.get();
+        return {
+            status,
+            remoteUrl: cfg.remoteUrl || '',
+            dirtyList: db.getDirtyList(),
+            recentTiddlers: db.getRecentTiddlers(30),
+            syncLog: syncLog.slice()
+        };
+    });
+
+    ipcMain.handle('open-browser', () => {
+        shell.openExternal('http://localhost:' + server.getPort());
+        return { ok: true };
+    });
+
+    ipcMain.handle('reload-wiki', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.reload();
+            return { ok: true };
+        }
+        return { ok: false, error: 'main window not open' };
+    });
+
+    ipcMain.handle('open-settings', () => {
+        createSettingsWindow();
+        return { ok: true };
+    });
 }
 
 // ---------- Startup orchestration ----------
@@ -263,9 +381,24 @@ async function bootstrap() {
     config.init(userData);
     const cfg = config.get();
 
-    // Init DB
+    // Init DB + file-based tiddler store. Default tiddler dir is
+    // `{userData}/tiddlers/`; user can override via config / env.
     const dbPath = cfg.dbPath || path.join(userData, 'tiddlers.db');
-    db.init(dbPath);
+    const tiddlersDir = cfg.tiddlersDir && cfg.tiddlersDir.trim().length > 0
+        ? cfg.tiddlersDir
+        : path.join(userData, 'tiddlers');
+    db.init(dbPath, tiddlersDir);
+    // Reconcile: pick up hand-edited / hand-added .tid files so the user
+    // can freely edit in their editor between app runs. Anything new or
+    // modified is flagged dirty so the next sync pushes it.
+    try {
+        const r = db.reconcileWithFiles();
+        if (r.added || r.updated || r.missing) {
+            console.log('[main] file reconcile result:', r);
+        }
+    } catch (e) {
+        console.warn('[main] reconcile failed (non-fatal):', e.message);
+    }
 
     // If not configured → force settings first
     if (!config.isConfigured()) {
@@ -286,9 +419,11 @@ async function afterConfigured() {
     // Start local server
     await server.start();
 
-    // If first run: initial full sync with loading window
+    // Show loading window for initial sync and/or file cache warm-up
+    createLoadingWindow();
+
+    // If first run: initial full sync
     if (!sync.isInitialSyncDone()) {
-        createLoadingWindow();
         try {
             await sync.initialFullSync((p) => {
                 if (loadingWindow && !loadingWindow.isDestroyed()) {
@@ -301,16 +436,41 @@ async function afterConfigured() {
             createSettingsWindow();
             return;
         }
-        if (loadingWindow) loadingWindow.close();
     }
+
+    // Pre-warm file cache (async I/O), then build the fat tiddler list so
+    // tiddlers.json is served from memory — no disk reads, no lazy-loading.
+    try {
+        await db.warmFileCache((p) => {
+            if (loadingWindow && !loadingWindow.isDestroyed()) {
+                loadingWindow.webContents.send('progress', p);
+            }
+        });
+        db.listFull(); // build _fatCache while loading screen is still up
+    } catch (e) {
+        console.warn('[main] warmFileCache error (non-fatal):', e.message);
+    }
+
+    if (loadingWindow) loadingWindow.close();
 
     // Background sync
     sync.start();
     sync.on((status) => {
         refreshTrayMenu();
-        // Broadcast sync status to settings window (if open)
         if (settingsWindow && !settingsWindow.isDestroyed()) {
             settingsWindow.webContents.send('sync-status', status);
+        }
+        if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+            dashboardWindow.webContents.send('sync-status', status);
+        }
+        if (status.phase === 'idle' && status.status === 'done' && status.report) {
+            addSyncLog({
+                time: Date.now(),
+                pushed: status.report.pushed || 0,
+                pulled: status.report.pulled || 0,
+                removed: status.report.removed || 0,
+                errors: (status.report.errors || []).length
+            });
         }
     });
 

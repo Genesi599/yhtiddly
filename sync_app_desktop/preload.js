@@ -12,7 +12,13 @@ contextBridge.exposeInMainWorld('twApi', {
     resetLocalDb: () => ipcRenderer.invoke('reset-local-db'),
     clearHttpCache: () => ipcRenderer.invoke('clear-http-cache'),
     cacheStats: () => ipcRenderer.invoke('cache-stats'),
+    getTiddlersDir: () => ipcRenderer.invoke('get-tiddlers-dir'),
+    openTiddlersDir: () => ipcRenderer.invoke('open-tiddlers-dir'),
     closeSettings: () => ipcRenderer.send('close-settings'),
+    getDashboardData: () => ipcRenderer.invoke('get-dashboard-data'),
+    reloadWiki: () => ipcRenderer.invoke('reload-wiki'),
+    openBrowser: () => ipcRenderer.invoke('open-browser'),
+    openSettings: () => ipcRenderer.invoke('open-settings'),
     onProgress: (cb) => {
         const listener = (_e, p) => cb(p);
         ipcRenderer.on('progress', listener);
