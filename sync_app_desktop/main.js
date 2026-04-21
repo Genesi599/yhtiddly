@@ -16,6 +16,7 @@ const config = require('./config');
 const db = require('./db');
 const server = require('./server');
 const sync = require('./sync');
+const backup = require('./backup');
 
 let mainWindow = null;
 let settingsWindow = null;
@@ -42,7 +43,7 @@ function createMainWindow() {
         width: 1400,
         height: 900,
         title: 'TiddlyWiki Sync',
-        icon: path.join(__dirname, 'ui', 'tray-icon.png'),
+        icon: getAppIcon() || path.join(__dirname, 'ui', 'tray-icon.png'),
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
@@ -58,33 +59,61 @@ function createMainWindow() {
     // - storeTiddler is always called with isSkinny=true by the tiddlyweb adaptor,
     //   even for fat tiddlers. We fix this so tiddlers with text skip lazy loading.
     // - Also disable TW's own sync polling (our sync.js handles sync externally).
+    // Ctrl+scroll zoom
+    mainWindow.webContents.on('did-finish-load', () => {
+        mainWindow.webContents.executeJavaScript(`
+            window.addEventListener('wheel', function(e) {
+                if (!e.ctrlKey) return;
+                e.preventDefault();
+                if (window.twApi && window.twApi.adjustZoom) {
+                    window.twApi.adjustZoom(e.deltaY < 0 ? 0.5 : -0.5);
+                }
+            }, { passive: false });
+        `).catch(() => {});
+    });
+
+    // Fallback patch (runs after page load): disables TW's lazy-load and server sync.
+    // The HTML injection (server.js maybeInjectPatch) is the primary mechanism and fires
+    // earlier (synchronously during boot). This backup fires after did-finish-load in case
+    // the primary was skipped (e.g. the marker wasn't found).
     mainWindow.webContents.on('did-finish-load', () => {
         mainWindow.webContents.executeJavaScript(`
             (function patchSyncer() {
                 if (!window.$tw || !$tw.syncer) { setTimeout(patchSyncer, 50); return; }
-                var orig = $tw.syncer.storeTiddler.bind($tw.syncer);
-                $tw.syncer.storeTiddler = function(tiddlerFields, isSkinny) {
-                    // If tiddler already has text, don't mark it for lazy-loading
-                    return orig.call(this, tiddlerFields, isSkinny && !('text' in tiddlerFields));
-                };
-                // Disable TW's sync polling — sync.js handles sync externally
+                // Kill lazy-load: HTML embedded store already has all tiddlers fat
+                $tw.syncer.handleLazyLoadEvent = function() {};
+                // Prevent bulk server-to-client sync: revision mismatch would queue 18000+ XHRs
+                $tw.syncer.canSyncFromServer = function() { return false; };
                 $tw.syncer.syncFromServerInterval = 999999999;
                 if ($tw.syncer.pollTimerId) { clearTimeout($tw.syncer.pollTimerId); $tw.syncer.pollTimerId = null; }
-                console.log('[patch] storeTiddler patched, sync polling disabled');
+                console.log('[patch] lazy-load and sync-from-server disabled (fallback)');
             })();
         `).catch(() => {});
     });
 
     mainWindow.webContents.on('before-input-event', (event, input) => {
         if (input.type !== 'keyDown') return;
+        const ctrl = input.control || input.meta;
         if (input.key === 'F12') {
             mainWindow.webContents.toggleDevTools();
             event.preventDefault();
-        } else if ((input.control || input.meta) && input.shift && input.key.toLowerCase() === 'i') {
+        } else if (ctrl && input.shift && input.key.toLowerCase() === 'i') {
             mainWindow.webContents.toggleDevTools();
             event.preventDefault();
-        } else if ((input.control || input.meta) && input.key.toLowerCase() === 'r' && !input.shift) {
+        } else if (ctrl && input.key.toLowerCase() === 'r' && !input.shift) {
             mainWindow.webContents.reload();
+            event.preventDefault();
+        // Zoom in: Ctrl++ or Ctrl+=
+        } else if (ctrl && (input.key === '+' || input.key === '=' || input.key === 'Add')) {
+            mainWindow.webContents.setZoomLevel(mainWindow.webContents.getZoomLevel() + 0.5);
+            event.preventDefault();
+        // Zoom out: Ctrl+-
+        } else if (ctrl && (input.key === '-' || input.key === 'Subtract')) {
+            mainWindow.webContents.setZoomLevel(mainWindow.webContents.getZoomLevel() - 0.5);
+            event.preventDefault();
+        // Reset zoom: Ctrl+0
+        } else if (ctrl && input.key === '0') {
+            mainWindow.webContents.setZoomLevel(0);
             event.preventDefault();
         }
     });
@@ -203,22 +232,89 @@ function createLoadingWindow() {
     return loadingWindow;
 }
 
+// ---------- App icon from wiki favicon ----------
+
+// Try to load the favicon from the tiddler store and use it as the Electron
+// app icon (window + tray). Falls back to ui/tray-icon.png if not found.
+// The tiddler title 'favicon.ico' (or '$:/favicon.ico') stores a Base64-encoded
+// ICO/PNG that TW uses as the browser-tab favicon — we reuse it here so the
+// desktop app icon matches the wiki's favicon automatically.
+function loadFaviconImage() {
+    try {
+        const os = require('os');
+        for (const title of ['favicon.ico', '$:/favicon.ico']) {
+            const t = db.getTiddler(title);
+            if (!t || !t.fields || !t.fields.text) continue;
+            // Strip all whitespace — .tid parser joins text lines with \n
+            const b64 = String(t.fields.text).replace(/\s/g, '');
+            if (!b64) continue;
+            const buf = Buffer.from(b64, 'base64');
+            if (buf.length < 8) continue;
+
+            // First try createFromBuffer (works for PNG/JPEG)
+            let img = nativeImage.createFromBuffer(buf);
+            if (!img.isEmpty()) {
+                console.log('[icon] loaded via createFromBuffer, size:', buf.length);
+                return img;
+            }
+
+            // Fallback: write to a temp .ico file — Windows needs the file
+            // extension to pick the right codec; createFromBuffer doesn't
+            // infer ICO format reliably on all Electron builds.
+            const tmpFile = path.join(os.tmpdir(), 'tw-sync-icon.ico');
+            try {
+                fs.writeFileSync(tmpFile, buf);
+                img = nativeImage.createFromPath(tmpFile);
+                try { fs.unlinkSync(tmpFile); } catch (_) {}
+                if (!img.isEmpty()) {
+                    console.log('[icon] loaded via temp .ico file, size:', buf.length);
+                    return img;
+                }
+                console.warn('[icon] createFromPath also returned empty for', title);
+            } catch (e2) {
+                console.warn('[icon] temp file approach failed:', e2.message);
+                try { fs.unlinkSync(tmpFile); } catch (_) {}
+            }
+        }
+        console.warn('[icon] no usable favicon tiddler found');
+    } catch (e) {
+        console.warn('[icon] could not load favicon from wiki:', e.message);
+    }
+    return null;
+}
+
+let _appIcon = null;
+function getAppIcon() {
+    if (_appIcon) return _appIcon;
+    _appIcon = loadFaviconImage();
+    return _appIcon;
+}
+
 // ---------- Tray ----------
 
 // Minimal 16x16 blue square PNG (base64). Used if ui/tray-icon.png isn't present.
 const FALLBACK_ICON_B64 = 'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAW0lEQVR4nO3XsQ0AIAwDQSZhWOZkF+goggQUAQfpI7n2NSmckrlcarsZ2/eseAl5XT4hpABV+UAACAvwPgD/AXY5Lbj2BQAAAAAAAIAc4BU9QD5MQgDk41Q5zztNwGm/kTSctgAAAABJRU5ErkJggg==';
 
-function createTray() {
-    const iconPath = path.join(__dirname, 'ui', 'tray-icon.png');
-    let img;
+function loadTrayIcon() {
+    // Tray icons must be small and opaque-enough to be visible.
+    // Prefer the bundled app-icon.ico (rabbit image), resized to 16x16.
+    // The wiki's dark favicon tiddler renders as near-invisible in the tray.
+    const icoPath = path.join(__dirname, 'ui', 'app-icon.ico');
     try {
-        img = nativeImage.createFromPath(iconPath);
-        if (img.isEmpty()) throw new Error('empty');
-    } catch (e) {
-        // Fallback: use inlined base64 icon
-        img = nativeImage.createFromBuffer(Buffer.from(FALLBACK_ICON_B64, 'base64'));
-    }
-    tray = new Tray(img);
+        const img = nativeImage.createFromPath(icoPath);
+        if (!img.isEmpty()) return img.resize({ width: 16, height: 16 });
+    } catch (_) {}
+    // Fallback: tray-icon.png
+    try {
+        const img = nativeImage.createFromPath(path.join(__dirname, 'ui', 'tray-icon.png'));
+        if (!img.isEmpty()) return img;
+    } catch (_) {}
+    // Last resort: small blue square
+    return nativeImage.createFromBuffer(Buffer.from(FALLBACK_ICON_B64, 'base64'));
+}
+
+function createTray() {
+    tray = new Tray(loadTrayIcon());
     tray.setToolTip('TiddlyWiki Sync');
     refreshTrayMenu();
     tray.on('click', () => {
@@ -233,9 +329,13 @@ function createTray() {
 function refreshTrayMenu() {
     if (!tray) return;
     const status = sync.getStatus();
+    const bkStatus = backup.getStatus();
     const lastSyncTxt = status.lastSync
         ? new Date(status.lastSync).toLocaleTimeString()
         : '从未';
+    const lastBackupTxt = bkStatus.lastBackup
+        ? new Date(bkStatus.lastBackup).toLocaleTimeString()
+        : (bkStatus.lastError ? '失败: ' + bkStatus.lastError.slice(0, 30) : '从未');
     const menu = Menu.buildFromTemplate([
         { label: '打开 TiddlyWiki', click: () => {
             if (!mainWindow) createMainWindow();
@@ -251,6 +351,18 @@ function refreshTrayMenu() {
             try { await sync.syncOnce(); refreshTrayMenu(); }
             catch (e) { dialog.showErrorBox('同步失败', e.message); }
         }},
+        ...(bkStatus.enabled ? [
+            { label: '上次备份: ' + lastBackupTxt, enabled: false },
+            { label: '立即备份', click: async () => {
+                try {
+                    const r = await backup.doBackup();
+                    refreshTrayMenu();
+                    dialog.showMessageBox({ type: 'info', title: '备份完成', message: '已备份至:\n' + bkStatus.backupDir + '\n' + (r.filename || ''), buttons: ['好'] });
+                } catch (e) {
+                    dialog.showErrorBox('备份失败', e.message);
+                }
+            }},
+        ] : []),
         { label: '控制台…', click: () => createDashboardWindow() },
         { label: '设置…', click: () => createSettingsWindow() },
         { type: 'separator' },
@@ -370,6 +482,38 @@ function registerIpc() {
         createSettingsWindow();
         return { ok: true };
     });
+
+    ipcMain.handle('adjust-zoom', (_e, delta) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            const cur = mainWindow.webContents.getZoomLevel();
+            mainWindow.webContents.setZoomLevel(
+                delta === 0 ? 0 : Math.max(-5, Math.min(5, cur + delta))
+            );
+        }
+    });
+
+    // ── Backup IPC ──────────────────────────────────────────────────────
+    ipcMain.handle('get-backup-status', () => backup.getStatus());
+
+    ipcMain.handle('backup-now', async () => {
+        try { return await backup.doBackup(); }
+        catch (e) { return { error: e.message }; }
+    });
+
+    ipcMain.handle('save-backup-config', (_e, { backupDir, backupInterval }) => {
+        const saved = config.save({ backupDir, backupInterval });
+        // Restart scheduler with new settings
+        backup.stop();
+        backup.start();
+        refreshTrayMenu();
+        return { ok: true, config: saved };
+    });
+
+    ipcMain.handle('open-backup-dir', () => {
+        const dir = config.get().backupDir;
+        if (dir) shell.openPath(dir);
+        return { ok: !!dir };
+    });
 }
 
 // ---------- Startup orchestration ----------
@@ -455,6 +599,16 @@ async function afterConfigured() {
 
     // Background sync
     sync.start();
+
+    // Periodic HTML backup
+    backup.start();
+    backup.on((ev) => {
+        refreshTrayMenu();
+        if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+            dashboardWindow.webContents.send('backup-status', ev);
+        }
+    });
+
     sync.on((status) => {
         refreshTrayMenu();
         if (settingsWindow && !settingsWindow.isDestroyed()) {
@@ -499,6 +653,7 @@ async function quitApp() {
     if (isQuittingForReal) return;
     isQuittingForReal = true;
     sync.stop();
+    backup.stop();
 
     // Give a PUSH-only final sync 3s max. Skip pull entirely.
     try {

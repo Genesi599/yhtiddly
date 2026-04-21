@@ -244,6 +244,14 @@ function buildApp() {
         const scriptTagIdx = text.lastIndexOf('<script', bootCallIdx);
         if (scriptTagIdx < 0) return body;
 
+        // TW 5.3.8 changed the sync mechanism: instead of storeTiddler(fields, isSkinny),
+        // it uses handleLazyLoadEvent + canSyncFromServer (SyncFromServerTask) which compares
+        // revision strings. Our local DB has mismatched revisions ("4.0" vs "4", "0" vs "3"),
+        // causing ALL 18000+ tiddlers to be queued for lazy-loading. Since the HTML embedded
+        // store already contains all tiddlers with full text, we can safely disable both:
+        //   1. handleLazyLoadEvent → no-op (no individual XHRs when text is accessed)
+        //   2. canSyncFromServer → false (no bulk SyncFromServerTask triggered by getStatus)
+        // TW still handles saves correctly (SaveTiddlerTask is unaffected).
         const script = '<script>(function(){' +
             'if(!window.$tw)return;' +
             'Object.defineProperty($tw,"syncer",{configurable:true,enumerable:true,' +
@@ -251,13 +259,14 @@ function buildApp() {
                 'set:function(v){' +
                     '$tw.__syncer__=v;' +
                     'if(!v)return;' +
-                    // Treat tiddlers with text as fat (not skinny) → no lazy-load requests
-                    'var orig=v.storeTiddler.bind(v);' +
-                    'v.storeTiddler=function(f,s){return orig.call(this,f,s&&!("text"in f));};' +
-                    // Disable TW's own polling — sync.js handles server sync
+                    // No lazy-load XHRs: wiki already has all tiddlers fat from the embedded HTML store
+                    'v.handleLazyLoadEvent=function(){};' +
+                    // No bulk sync from server: revision format mismatch would queue 18000+ XHRs
+                    'v.canSyncFromServer=function(){return false;};' +
+                    // Disable TW's own polling — sync.js handles server sync externally
                     'v.syncFromServerInterval=999999999;' +
                     'if(v.pollTimerId){clearTimeout(v.pollTimerId);v.pollTimerId=null;}' +
-                    'console.log("[patch] storeTiddler patched");' +
+                    'console.log("[patch] lazy-load and sync-from-server disabled");' +
                 '}' +
             '});' +
         '})();</script>\n';

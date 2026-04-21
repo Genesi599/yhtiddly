@@ -31,228 +31,128 @@ body {
 .header .remote { font-size: 11px; color: #8899bb; margin-top: 2px; font-family: monospace; }
 .header-left { flex: 1; }
 .status-pill {
-    display: flex;
-    align-items: center;
-    gap: 6px;
+    display: flex; align-items: center; gap: 6px;
     background: rgba(255,255,255,0.08);
-    border-radius: 20px;
-    padding: 4px 12px;
-    font-size: 12px;
+    border-radius: 20px; padding: 4px 12px; font-size: 12px;
 }
-.dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: #666;
-    flex-shrink: 0;
-}
-.dot.idle   { background: #4caf50; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #666; flex-shrink: 0; }
+.dot.idle    { background: #4caf50; }
 .dot.syncing { background: #2196f3; animation: pulse 1s infinite; }
-.dot.error  { background: #f44336; }
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50%       { opacity: 0.4; }
-}
+.dot.error   { background: #f44336; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
 
 /* ── Stats row ───────────────────────────────── */
-.stats-row {
-    display: flex;
-    gap: 12px;
-    padding: 14px 20px 0;
-    flex-shrink: 0;
-}
+.stats-row { display: flex; gap: 12px; padding: 14px 20px 0; flex-shrink: 0; }
 .stat-card {
-    flex: 1;
-    background: #fff;
-    border-radius: 8px;
-    padding: 12px 16px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    flex: 1; background: #fff; border-radius: 8px;
+    padding: 12px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
 }
 .stat-value { font-size: 28px; font-weight: 700; color: #1a1f2e; line-height: 1; }
 .stat-value.warn { color: #e67e00; }
 .stat-label { font-size: 11px; color: #888; margin-top: 4px; }
 
 /* ── Action bar ──────────────────────────────── */
-.action-bar {
-    display: flex;
-    gap: 8px;
-    padding: 12px 20px;
-    flex-shrink: 0;
-}
+.action-bar { display: flex; gap: 8px; padding: 12px 20px; flex-shrink: 0; align-items: center; }
 button {
-    padding: 7px 16px;
-    border: 1px solid #d0d4db;
-    background: #fff;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 13px;
-    font-family: inherit;
-    color: #333;
-    transition: background 0.15s;
+    padding: 7px 16px; border: 1px solid #d0d4db; background: #fff;
+    border-radius: 6px; cursor: pointer; font-size: 13px;
+    font-family: inherit; color: #333; transition: background 0.15s;
 }
-button:hover { background: #f0f2f5; }
+button:hover  { background: #f0f2f5; }
 button:active { background: #e8eaed; }
-button.primary {
-    background: #2c5eff;
-    color: #fff;
-    border-color: #2c5eff;
-    font-weight: 500;
-}
+button.primary { background: #2c5eff; color: #fff; border-color: #2c5eff; font-weight: 500; }
 button.primary:hover { background: #1a4eee; }
-button.primary:disabled {
-    background: #7faeff;
-    border-color: #7faeff;
-    cursor: default;
-}
+button.primary:disabled { background: #7faeff; border-color: #7faeff; cursor: default; }
+button.green { background: #27ae60; color: #fff; border-color: #27ae60; }
+button.green:hover { background: #219a52; }
+button.green:disabled { background: #88cfa4; border-color: #88cfa4; cursor: default; }
 
 /* ── Progress ────────────────────────────────── */
 .progress-area {
-    margin: 0 20px;
-    background: #fff;
-    border-radius: 8px;
-    padding: 12px 16px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-    flex-shrink: 0;
+    margin: 0 20px; background: #fff; border-radius: 8px;
+    padding: 12px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); flex-shrink: 0;
 }
 .progress-area.hidden { display: none; }
 .progress-phase { font-size: 12px; color: #444; margin-bottom: 8px; }
-.progress-track {
-    height: 6px;
-    background: #e8eaed;
-    border-radius: 3px;
-    overflow: hidden;
-}
-.progress-bar {
-    height: 100%;
-    width: 0%;
-    background: #2c5eff;
-    border-radius: 3px;
-    transition: width 0.25s ease;
-}
+.progress-track { height: 6px; background: #e8eaed; border-radius: 3px; overflow: hidden; }
+.progress-bar { height: 100%; width: 0%; background: #2c5eff; border-radius: 3px; transition: width 0.25s ease; }
 .progress-bar.done { background: #4caf50; }
 .progress-bar.err  { background: #f44336; }
 .progress-counts { font-size: 11px; color: #888; margin-top: 6px; }
 
-/* ── Content area ────────────────────────────── */
-.content-area {
-    display: flex;
-    gap: 12px;
-    padding: 12px 20px;
-    flex: 1;
-    min-height: 0;
+/* ── Main layout: tabs ───────────────────────── */
+.tabs { display: flex; gap: 0; padding: 10px 20px 0; flex-shrink: 0; }
+.tab-btn {
+    padding: 7px 18px; border: 1px solid #d0d4db; background: #f0f2f5;
+    cursor: pointer; font-size: 12px; font-family: inherit; color: #666;
+    border-radius: 6px 6px 0 0; border-bottom: none; margin-right: 4px;
+    transition: background 0.12s;
 }
+.tab-btn.active { background: #fff; color: #1a1f2e; font-weight: 600; }
+.tab-content { display: none; flex: 1; min-height: 0; }
+.tab-content.active { display: flex; flex-direction: column; }
 
+/* ── Tiddler panels ──────────────────────────── */
+.content-area { display: flex; gap: 12px; padding: 12px 20px; flex: 1; min-height: 0; }
 .panel {
-    background: #fff;
-    border-radius: 8px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
+    background: #fff; border-radius: 0 8px 8px 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    display: flex; flex-direction: column; min-height: 0;
 }
+.panel.first { border-radius: 8px; }
 .panel.dirty  { flex: 0 0 320px; }
 .panel.recent { flex: 1; }
-
 .panel-header {
-    display: flex;
-    align-items: center;
-    padding: 10px 14px;
-    border-bottom: 1px solid #f0f0f0;
-    flex-shrink: 0;
+    display: flex; align-items: center; padding: 10px 14px;
+    border-bottom: 1px solid #f0f0f0; flex-shrink: 0;
 }
 .panel-title { font-weight: 600; font-size: 12px; color: #444; text-transform: uppercase; letter-spacing: 0.5px; }
-.badge {
-    margin-left: 8px;
-    background: #e8eaed;
-    color: #555;
-    border-radius: 10px;
-    padding: 1px 7px;
-    font-size: 11px;
-    font-weight: 600;
-}
+.badge { margin-left: 8px; background: #e8eaed; color: #555; border-radius: 10px; padding: 1px 7px; font-size: 11px; font-weight: 600; }
 .badge.warn { background: #fff3e0; color: #e67e00; }
-
-.list-area {
-    overflow-y: auto;
-    flex: 1;
-    padding: 6px 0;
-}
-.list-item {
-    display: flex;
-    align-items: center;
-    padding: 6px 14px;
-    gap: 8px;
-    border-bottom: 1px solid #fafafa;
-    min-width: 0;
-}
+.list-area { overflow-y: auto; flex: 1; padding: 6px 0; }
+.list-item { display: flex; align-items: center; padding: 6px 14px; gap: 8px; border-bottom: 1px solid #fafafa; min-width: 0; }
 .list-item:hover { background: #f7f8fa; }
-.list-item .title {
-    flex: 1;
-    font-family: monospace;
-    font-size: 12px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    color: #222;
-}
-.list-item .meta {
-    font-size: 11px;
-    color: #aaa;
-    flex-shrink: 0;
-    white-space: nowrap;
-}
-.tag-tombstone {
-    background: #fce8e8;
-    color: #c0392b;
-    font-size: 10px;
-    border-radius: 4px;
-    padding: 1px 5px;
-    flex-shrink: 0;
-}
-.tag-dirty {
-    background: #fff3e0;
-    color: #e67e00;
-    font-size: 10px;
-    border-radius: 4px;
-    padding: 1px 5px;
-    flex-shrink: 0;
-}
-.empty-hint {
-    padding: 24px 14px;
-    text-align: center;
-    color: #bbb;
-    font-size: 12px;
-}
+.list-item .title { flex: 1; font-family: monospace; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #222; }
+.list-item .meta  { font-size: 11px; color: #aaa; flex-shrink: 0; white-space: nowrap; }
+.tag-tombstone { background: #fce8e8; color: #c0392b; font-size: 10px; border-radius: 4px; padding: 1px 5px; flex-shrink: 0; }
+.tag-dirty     { background: #fff3e0; color: #e67e00; font-size: 10px; border-radius: 4px; padding: 1px 5px; flex-shrink: 0; }
+.empty-hint    { padding: 24px 14px; text-align: center; color: #bbb; font-size: 12px; }
 
-/* ── Log panel ───────────────────────────────── */
+/* ── Sync log ────────────────────────────────── */
 .log-panel {
-    background: #fff;
-    border-radius: 8px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-    margin: 0 20px 14px;
-    flex-shrink: 0;
-    max-height: 120px;
-    display: flex;
-    flex-direction: column;
+    background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    margin: 0 20px 14px; flex-shrink: 0; max-height: 110px; display: flex; flex-direction: column;
 }
-.log-list {
-    overflow-y: auto;
-    flex: 1;
-    padding: 4px 0;
-}
-.log-entry {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 5px 14px;
-    font-size: 11px;
-    border-bottom: 1px solid #fafafa;
-}
-.log-time { color: #aaa; flex-shrink: 0; font-family: monospace; }
+.log-list { overflow-y: auto; flex: 1; padding: 4px 0; }
+.log-entry { display: flex; align-items: center; gap: 12px; padding: 5px 14px; font-size: 11px; border-bottom: 1px solid #fafafa; }
+.log-time  { color: #aaa; flex-shrink: 0; font-family: monospace; }
 .log-stats { flex: 1; color: #444; }
-.log-stats .up { color: #2196f3; }
+.log-stats .up   { color: #2196f3; }
 .log-stats .down { color: #4caf50; }
-.log-stats .err { color: #f44336; }
+.log-stats .err  { color: #f44336; }
+
+/* ── Backup tab ──────────────────────────────── */
+.backup-body { padding: 16px 20px; overflow-y: auto; flex: 1; }
+.bk-section { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); padding: 16px 18px; margin-bottom: 14px; }
+.bk-section h3 { font-size: 12px; font-weight: 600; color: #444; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+.bk-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.bk-row:last-child { margin-bottom: 0; }
+.bk-label { font-size: 12px; color: #666; flex-shrink: 0; width: 90px; }
+.bk-val   { font-size: 12px; color: #222; font-family: monospace; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bk-val.ok  { color: #27ae60; }
+.bk-val.err { color: #e74c3c; }
+.bk-dir-input { flex: 1; padding: 5px 8px; border: 1px solid #d0d4db; border-radius: 5px; font-size: 12px; font-family: monospace; }
+select.bk-select { padding: 5px 8px; border: 1px solid #d0d4db; border-radius: 5px; font-size: 12px; font-family: inherit; background: #fff; }
+.bk-action-row { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+.bk-hint { font-size: 11px; color: #aaa; margin-top: 6px; }
+
+/* backup log */
+.bk-log-list { margin-top: 4px; }
+.bk-log-entry { display: flex; gap: 10px; padding: 5px 0; border-bottom: 1px solid #f0f0f0; font-size: 11px; align-items: center; }
+.bk-log-entry:last-child { border-bottom: none; }
+.bk-log-time { color: #aaa; flex-shrink: 0; font-family: monospace; }
+.bk-log-file { flex: 1; font-family: monospace; color: #444; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bk-log-size { color: #888; flex-shrink: 0; }
+.bk-log-err  { color: #e74c3c; flex: 1; }
 </style>
 </head>
 <body>
@@ -292,46 +192,111 @@ button.primary:disabled {
     <button id="btnOpenTW">打开 TiddlyWiki</button>
     <button id="btnReload">刷新 Wiki</button>
     <button id="btnSettings">设置</button>
-    <div id="syncMsg" style="margin-left:8px; font-size:12px; color:#888; align-self:center;"></div>
+    <div id="syncMsg" style="margin-left:8px; font-size:12px; color:#888;"></div>
 </div>
 
 <!-- Progress -->
 <div class="progress-area hidden" id="progressArea">
     <div class="progress-phase" id="progressPhase">-</div>
-    <div class="progress-track">
-        <div class="progress-bar" id="progressBar"></div>
-    </div>
+    <div class="progress-track"><div class="progress-bar" id="progressBar"></div></div>
     <div class="progress-counts" id="progressCounts"></div>
 </div>
 
-<!-- Content columns -->
-<div class="content-area">
-    <div class="panel dirty">
-        <div class="panel-header">
-            <span class="panel-title">待上传</span>
-            <span class="badge warn" id="dirtyBadge">0</span>
+<!-- Tabs -->
+<div class="tabs">
+    <button class="tab-btn active" data-tab="sync">同步</button>
+    <button class="tab-btn" data-tab="backup">备份</button>
+</div>
+
+<!-- Tab: Sync -->
+<div class="tab-content active" id="tab-sync">
+    <div class="content-area">
+        <div class="panel dirty">
+            <div class="panel-header">
+                <span class="panel-title">待上传</span>
+                <span class="badge warn" id="dirtyBadge">0</span>
+            </div>
+            <div class="list-area" id="dirtyList">
+                <div class="empty-hint">暂无待上传的条目</div>
+            </div>
         </div>
-        <div class="list-area" id="dirtyList">
-            <div class="empty-hint">暂无待上传的条目</div>
+        <div class="panel recent">
+            <div class="panel-header"><span class="panel-title">最近修改</span></div>
+            <div class="list-area" id="recentList">
+                <div class="empty-hint">暂无条目</div>
+            </div>
         </div>
     </div>
-    <div class="panel recent">
-        <div class="panel-header">
-            <span class="panel-title">最近修改</span>
+    <div class="log-panel">
+        <div class="panel-header" style="padding:8px 14px;">
+            <span class="panel-title">同步记录</span>
         </div>
-        <div class="list-area" id="recentList">
-            <div class="empty-hint">暂无条目</div>
+        <div class="log-list" id="syncLog">
+            <div class="empty-hint">暂无同步记录</div>
         </div>
     </div>
 </div>
 
-<!-- Sync log -->
-<div class="log-panel">
-    <div class="panel-header" style="padding:8px 14px;">
-        <span class="panel-title">同步记录</span>
-    </div>
-    <div class="log-list" id="syncLog">
-        <div class="empty-hint">暂无同步记录</div>
+<!-- Tab: Backup -->
+<div class="tab-content" id="tab-backup">
+    <div class="backup-body">
+
+        <!-- Status card -->
+        <div class="bk-section">
+            <h3>备份状态</h3>
+            <div class="bk-row">
+                <span class="bk-label">状态</span>
+                <span class="bk-val" id="bkStatus">-</span>
+            </div>
+            <div class="bk-row">
+                <span class="bk-label">上次备份</span>
+                <span class="bk-val" id="bkLastTime">-</span>
+            </div>
+            <div class="bk-row">
+                <span class="bk-label">文件名</span>
+                <span class="bk-val" id="bkLastFile">-</span>
+            </div>
+            <div class="bk-action-row">
+                <button id="btnBackupNow" class="green">立即备份</button>
+                <button id="btnOpenBkDir">打开目录</button>
+                <span id="bkMsg" style="font-size:12px;color:#888;"></span>
+            </div>
+        </div>
+
+        <!-- Settings card -->
+        <div class="bk-section">
+            <h3>备份设置</h3>
+            <div class="bk-row">
+                <span class="bk-label">备份目录</span>
+                <input class="bk-dir-input" id="bkDirInput" type="text" placeholder="例: C:\Users\你\Nutstore\TiddlyWiki\backup">
+            </div>
+            <div class="bk-row">
+                <span class="bk-label">备份频率</span>
+                <select class="bk-select" id="bkIntervalSelect">
+                    <option value="0">关闭自动备份</option>
+                    <option value="1800000">每 30 分钟</option>
+                    <option value="3600000">每 1 小时</option>
+                    <option value="7200000">每 2 小时</option>
+                    <option value="21600000">每 6 小时</option>
+                    <option value="43200000">每 12 小时</option>
+                    <option value="86400000">每天一次</option>
+                </select>
+            </div>
+            <div class="bk-hint">文件名格式：tiddlywiki_YYYYMMDD_HHmmss.html</div>
+            <div class="bk-action-row" style="margin-top:12px;">
+                <button id="btnSaveBk" class="primary">保存设置</button>
+                <span id="bkSaveMsg" style="font-size:12px;color:#888;"></span>
+            </div>
+        </div>
+
+        <!-- Backup log card -->
+        <div class="bk-section">
+            <h3>最近备份记录</h3>
+            <div class="bk-log-list" id="bkLogList">
+                <div class="empty-hint">暂无记录</div>
+            </div>
+        </div>
+
     </div>
 </div>
 
@@ -344,36 +309,43 @@ button.primary:disabled {
     function relTime(ms) {
         if (!ms) return '-';
         const diff = Date.now() - ms;
-        if (diff < 5000)   return '刚刚';
-        if (diff < 60000)  return Math.round(diff / 1000) + ' 秒前';
+        if (diff < 5000)    return '刚刚';
+        if (diff < 60000)   return Math.round(diff / 1000) + ' 秒前';
         if (diff < 3600000) return Math.round(diff / 60000) + ' 分钟前';
         if (diff < 86400000) return Math.round(diff / 3600000) + ' 小时前';
         return Math.round(diff / 86400000) + ' 天前';
     }
-
+    function fmtTime(ms) {
+        if (!ms) return '-';
+        return new Date(ms).toLocaleString('zh-CN');
+    }
     function fmtModified(s) {
         if (!s) return '';
-        // TW compact format: 20240101120000000
         const m = s.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})/);
-        if (m) return m[1] + '-' + m[2] + '-' + m[3] + ' ' + m[4] + ':' + m[5];
-        // ISO
-        try { return new Date(s).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }); }
-        catch (e) { return s.slice(0, 16); }
+        if (m) return m[1]+'-'+m[2]+'-'+m[3]+' '+m[4]+':'+m[5];
+        try { return new Date(s).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}); }
+        catch(e){ return s.slice(0,16); }
     }
+    function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-    function esc(s) {
-        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    }
+    // ── Tabs ───────────────────────────────────────────────────────────
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const tab = btn.dataset.tab;
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            btn.classList.add('active');
+            $('tab-' + tab).classList.add('active');
+            if (tab === 'backup') refreshBackup();
+        });
+    });
 
-    // ── Render helpers ─────────────────────────────────────────────────
+    // ── Sync tab renders ───────────────────────────────────────────────
     function renderDirtyList(items) {
         const el = $('dirtyList');
         $('dirtyBadge').textContent = items.length;
         $('dirtyBadge').className = 'badge' + (items.length > 0 ? ' warn' : '');
-        if (!items.length) {
-            el.innerHTML = '<div class="empty-hint">暂无待上传的条目 ✓</div>';
-            return;
-        }
+        if (!items.length) { el.innerHTML = '<div class="empty-hint">暂无待上传的条目 ✓</div>'; return; }
         el.innerHTML = items.map(r => `
             <div class="list-item">
                 <span class="title" title="${esc(r.title)}">${esc(r.title)}</span>
@@ -381,57 +353,80 @@ button.primary:disabled {
                 <span class="meta">${fmtModified(r.modified)}</span>
             </div>`).join('');
     }
-
     function renderRecentList(items) {
         const el = $('recentList');
-        if (!items.length) {
-            el.innerHTML = '<div class="empty-hint">暂无条目</div>';
-            return;
-        }
+        if (!items.length) { el.innerHTML = '<div class="empty-hint">暂无条目</div>'; return; }
         el.innerHTML = items.map(r => `
             <div class="list-item">
                 <span class="title" title="${esc(r.title)}">${esc(r.title)}</span>
                 <span class="meta">${fmtModified(r.modified)}</span>
             </div>`).join('');
     }
-
     function renderSyncLog(entries) {
         const el = $('syncLog');
-        if (!entries.length) {
-            el.innerHTML = '<div class="empty-hint">暂无同步记录</div>';
-            return;
-        }
+        if (!entries.length) { el.innerHTML = '<div class="empty-hint">暂无同步记录</div>'; return; }
         el.innerHTML = entries.map(e => {
             const parts = [];
             if (e.pushed)  parts.push(`<span class="up">↑${e.pushed}</span>`);
             if (e.pulled)  parts.push(`<span class="down">↓${e.pulled}</span>`);
             if (e.removed) parts.push(`<span>移除 ${e.removed}</span>`);
             if (e.errors)  parts.push(`<span class="err">失败 ${e.errors}</span>`);
-            const stats = parts.length ? parts.join(' &nbsp;') : '无变更';
             return `<div class="log-entry">
                 <span class="log-time">${relTime(e.time)}</span>
-                <span class="log-stats">${stats}</span>
+                <span class="log-stats">${parts.length ? parts.join(' &nbsp;') : '无变更'}</span>
+            </div>`;
+        }).join('');
+    }
+    function applyStatus(status) {
+        $('dirtyCount').textContent = status.dirtyCount;
+        $('dirtyCount').className = 'stat-value' + (status.dirtyCount > 0 ? ' warn' : '');
+        $('totalCount').textContent = status.totalTiddlers;
+        $('lastSync').textContent = relTime(status.lastSync) || '-';
+        const dot = $('statusDot'), txt = $('statusText');
+        if (status.syncing) { dot.className = 'dot syncing'; txt.textContent = '同步中…'; }
+        else                { dot.className = 'dot idle';    txt.textContent = '已连接'; }
+    }
+
+    // ── Backup tab ─────────────────────────────────────────────────────
+    function renderBackupLog(log) {
+        const el = $('bkLogList');
+        if (!log || !log.length) { el.innerHTML = '<div class="empty-hint">暂无记录</div>'; return; }
+        el.innerHTML = log.map(e => {
+            if (e.error) return `<div class="bk-log-entry">
+                <span class="bk-log-time">${fmtTime(e.time)}</span>
+                <span class="bk-log-err">失败: ${esc(e.error)}</span>
+            </div>`;
+            const kb = Math.round(e.size / 1024);
+            return `<div class="bk-log-entry">
+                <span class="bk-log-time">${fmtTime(e.time)}</span>
+                <span class="bk-log-file">${esc(e.filename || '-')}</span>
+                <span class="bk-log-size">${kb} KiB</span>
             </div>`;
         }).join('');
     }
 
-    function applyStatus(status) {
-        const dot  = $('statusDot');
-        const txt  = $('statusText');
-        const dCnt = $('dirtyCount');
-
-        dCnt.textContent = status.dirtyCount;
-        dCnt.className = 'stat-value' + (status.dirtyCount > 0 ? ' warn' : '');
-        $('totalCount').textContent = status.totalTiddlers;
-        $('lastSync').textContent = relTime(status.lastSync) || '-';
-
-        if (status.syncing) {
-            dot.className = 'dot syncing';
-            txt.textContent = '同步中…';
+    async function refreshBackup() {
+        const s = await api.getBackupStatus();
+        // Status
+        if (!s.backupDir) {
+            $('bkStatus').textContent = '未配置备份目录';
+            $('bkStatus').className = 'bk-val err';
+        } else if (!s.interval) {
+            $('bkStatus').textContent = '已禁用自动备份';
+            $('bkStatus').className = 'bk-val';
         } else {
-            dot.className = 'dot idle';
-            txt.textContent = '已连接';
+            $('bkStatus').textContent = '已启用，每 ' + Math.round(s.interval/60000) + ' 分钟';
+            $('bkStatus').className = 'bk-val ok';
         }
+        $('bkLastTime').textContent = s.lastBackup ? fmtTime(s.lastBackup) : (s.lastError ? '失败' : '从未');
+        $('bkLastFile').textContent = s.lastFile || (s.lastError ? s.lastError : '-');
+        $('bkLastFile').className = 'bk-val' + (s.lastError ? ' err' : '');
+
+        // Settings inputs
+        $('bkDirInput').value = s.backupDir || '';
+        $('bkIntervalSelect').value = String(s.interval || 3600000);
+
+        renderBackupLog(s.log);
     }
 
     // ── Initial load ───────────────────────────────────────────────────
@@ -444,8 +439,6 @@ button.primary:disabled {
         renderSyncLog(data.syncLog || []);
     }
     refresh();
-
-    // Auto-refresh stats every 10s when idle
     setInterval(async () => {
         if (!syncInProgress) {
             const data = await api.getDashboardData();
@@ -455,91 +448,92 @@ button.primary:disabled {
         }
     }, 10000);
 
-    // ── Sync progress live updates ─────────────────────────────────────
+    // ── Sync progress ──────────────────────────────────────────────────
     let syncInProgress = false;
-
     api.onSyncStatus(s => {
-        const area = $('progressArea');
-        const bar  = $('progressBar');
-        const phase = $('progressPhase');
-        const counts = $('progressCounts');
-
+        const area = $('progressArea'), bar = $('progressBar');
+        const phase = $('progressPhase'), counts = $('progressCounts');
         if (s.phase === 'idle' && s.status === 'done') {
-            bar.style.width = '100%';
-            bar.className = 'progress-bar done';
-            phase.textContent = '同步完成';
-            syncInProgress = false;
-            $('btnSync').disabled = false;
-            $('syncMsg').textContent = '';
-            setTimeout(() => {
-                area.classList.add('hidden');
-                bar.className = 'progress-bar';
-                refresh();
-            }, 1800);
+            bar.style.width = '100%'; bar.className = 'progress-bar done';
+            phase.textContent = '同步完成'; syncInProgress = false;
+            $('btnSync').disabled = false; $('syncMsg').textContent = '';
+            setTimeout(() => { area.classList.add('hidden'); bar.className = 'progress-bar'; refresh(); }, 1800);
             return;
         }
-
         if (s.phase === 'idle' && s.status === 'error') {
-            bar.className = 'progress-bar err';
-            phase.textContent = '出错：' + (s.error || '');
-            syncInProgress = false;
-            $('btnSync').disabled = false;
-            return;
+            bar.className = 'progress-bar err'; phase.textContent = '出错：' + (s.error || '');
+            syncInProgress = false; $('btnSync').disabled = false; return;
         }
-
-        area.classList.remove('hidden');
-        syncInProgress = true;
-
+        area.classList.remove('hidden'); syncInProgress = true;
         if (s.phase === 'push') {
-            const t = s.pushTotal || 0, d = s.pushDone || 0;
+            const t=s.pushTotal||0, d=s.pushDone||0;
             phase.textContent = '上传本地修改…';
-            bar.style.width = t > 0 ? Math.round(d / t * 100) + '%' : '5%';
-            counts.textContent = t > 0 ? (d + ' / ' + t) : '';
+            bar.style.width = t>0 ? Math.round(d/t*100)+'%' : '5%';
+            counts.textContent = t>0 ? d+' / '+t : '';
         } else if (s.phase === 'pull') {
-            if (s.status === 'listing') {
-                phase.textContent = '获取远程列表…';
-                bar.style.width = '15%';
-                counts.textContent = '';
-            } else if (s.status === 'fetching') {
-                const t = s.pullTotal || 0, d = s.pullDone || 0;
-                phase.textContent = '下载更新…';
-                bar.style.width = t > 0 ? Math.round(40 + d / t * 60) + '%' : '50%';
-                counts.textContent = d + ' / ' + t + (s.errors ? '，失败 ' + s.errors : '');
+            if (s.status === 'listing') { phase.textContent = '获取远程列表…'; bar.style.width='15%'; counts.textContent=''; }
+            else if (s.status === 'fetching') {
+                const t=s.pullTotal||0, d=s.pullDone||0;
+                phase.textContent='下载更新…';
+                bar.style.width = t>0 ? Math.round(40+d/t*60)+'%' : '50%';
+                counts.textContent = d+' / '+t+(s.errors ? '，失败 '+s.errors : '');
             }
         }
     });
 
-    // ── Buttons ────────────────────────────────────────────────────────
+    // ── Buttons: sync ─────────────────────────────────────────────────
     $('btnSync').onclick = async () => {
-        $('btnSync').disabled = true;
-        $('syncMsg').textContent = '同步中…';
+        $('btnSync').disabled = true; $('syncMsg').textContent = '同步中…';
         const r = await api.syncNow();
         $('btnSync').disabled = false;
-        if (r && r.error) {
-            $('syncMsg').textContent = '失败: ' + r.error;
-        } else if (r) {
-            const errs = (r.errors || []).length;
-            $('syncMsg').textContent = '↑' + (r.pushed || 0) + ' ↓' + (r.pulled || 0) +
-                (errs ? ' 失败' + errs : '');
-        }
+        if (r && r.error) $('syncMsg').textContent = '失败: ' + r.error;
+        else if (r) $('syncMsg').textContent = '↑'+(r.pushed||0)+' ↓'+(r.pulled||0)+((r.errors||[]).length?' 失败'+(r.errors||[]).length:'');
         refresh();
     };
+    $('btnReload').onclick  = () => api.reloadWiki();
+    $('btnOpenDir').onclick = () => api.openTiddlersDir();
+    $('btnOpenTW').onclick  = () => api.openBrowser();
+    $('btnSettings').onclick = () => api.openSettings();
 
-    $('btnReload').onclick = async () => {
-        await api.reloadWiki();
+    // ── Buttons: backup ───────────────────────────────────────────────
+    $('btnBackupNow').onclick = async () => {
+        $('btnBackupNow').disabled = true;
+        $('bkMsg').textContent = '备份中…';
+        try {
+            const r = await api.backupNow();
+            if (r && r.error) $('bkMsg').textContent = '失败: ' + r.error;
+            else $('bkMsg').textContent = '完成 ' + (r.filename || '');
+        } catch(e) { $('bkMsg').textContent = '失败: ' + e.message; }
+        $('btnBackupNow').disabled = false;
+        refreshBackup();
     };
 
-    $('btnOpenDir').onclick = async () => {
-        await api.openTiddlersDir();
+    $('btnOpenBkDir').onclick = () => api.openBackupDir();
+
+    $('btnSaveBk').onclick = async () => {
+        const dir      = $('bkDirInput').value.trim();
+        const interval = parseInt($('bkIntervalSelect').value, 10);
+        $('bkSaveMsg').textContent = '保存中…';
+        const r = await api.saveBackupConfig({ backupDir: dir, backupInterval: interval });
+        $('bkSaveMsg').textContent = r.ok ? '已保存' : ('失败: ' + (r.error || ''));
+        setTimeout(() => { $('bkSaveMsg').textContent = ''; }, 2500);
+        refreshBackup();
     };
 
-    $('btnOpenTW').onclick = async () => {
-        await api.openBrowser();
-    };
+    // Live backup status updates pushed from main process
+    api.onBackupStatus(ev => {
+        if (ev.status === 'done') {
+            $('bkLastTime').textContent = fmtTime(ev.time);
+            $('bkLastFile').textContent = ev.filename || '-';
+            $('bkLastFile').className = 'bk-val';
+            $('bkStatus').className = 'bk-val ok';
+            refreshBackup();
+        } else if (ev.status === 'error') {
+            $('bkLastFile').textContent = ev.error || '未知错误';
+            $('bkLastFile').className = 'bk-val err';
+        }
+    });
 
-    $('btnSettings').onclick = async () => {
-        await api.openSettings();
-    };
 })();
 </script>
 </body>

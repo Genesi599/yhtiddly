@@ -19,7 +19,12 @@ const DEFAULTS = {
     // Users can point this at any folder they like (e.g. a synced Dropbox
     // dir, or a TiddlyWiki `tiddlers/` folder they want to share with a
     // standalone `tiddlywiki --load` run).
-    tiddlersDir: ''
+    tiddlersDir: '',
+    // Automatic HTML backup: full single-file TiddlyWiki saved to backupDir/.
+    // Filenames get a timestamp: tiddlywiki_YYYYMMDD_HHmmss.html
+    // backupInterval: ms between backups (0 = disabled). Default 1 hour.
+    backupDir: '',
+    backupInterval: 3600000
 };
 
 function init(userDataDir) {
@@ -69,7 +74,9 @@ function save(updates) {
         password: merged.password,
         autoStart: merged.autoStart,
         lastSyncTime: merged.lastSyncTime,
-        tiddlersDir: merged.tiddlersDir || ''
+        tiddlersDir: merged.tiddlersDir || '',
+        backupDir: merged.backupDir || '',
+        backupInterval: merged.backupInterval || 3600000
     };
 
     fs.writeFileSync(configPath, JSON.stringify(toSave, null, 2), 'utf8');

@@ -28,5 +28,15 @@ contextBridge.exposeInMainWorld('twApi', {
         const listener = (_e, s) => cb(s);
         ipcRenderer.on('sync-status', listener);
         return () => ipcRenderer.removeListener('sync-status', listener);
+    },
+    adjustZoom: (delta) => ipcRenderer.invoke('adjust-zoom', delta),
+    getBackupStatus: () => ipcRenderer.invoke('get-backup-status'),
+    backupNow: () => ipcRenderer.invoke('backup-now'),
+    saveBackupConfig: (cfg) => ipcRenderer.invoke('save-backup-config', cfg),
+    openBackupDir: () => ipcRenderer.invoke('open-backup-dir'),
+    onBackupStatus: (cb) => {
+        const listener = (_e, s) => cb(s);
+        ipcRenderer.on('backup-status', listener);
+        return () => ipcRenderer.removeListener('backup-status', listener);
     }
 });

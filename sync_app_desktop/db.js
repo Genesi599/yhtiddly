@@ -180,6 +180,12 @@ function assignFilename(title) {
     return fn;
 }
 
+// Titles that are never pushed to the remote server. These are UI-state
+// tiddlers that change constantly and have no value outside the current session.
+const NOSYNC_TITLES = new Set([
+    '$:/StoryList',
+]);
+
 // --- Tiddler CRUD ---------------------------------------------------------
 
 // Returns { revision, fields } or null. Reads `text` from the file on disk
@@ -278,7 +284,7 @@ function putTiddler(fields, source = 'local', revision = null) {
     const header = Object.assign({}, fields);
     delete header.text;
 
-    const dirtyNew = source === 'local' ? 1 : (existing && existing.dirty === 1 ? 1 : 0);
+    const dirtyNew = (source === 'local' && !NOSYNC_TITLES.has(title)) ? 1 : (existing && existing.dirty === 1 ? 1 : 0);
     const lastSynced = source === 'remote' ? now : (existing ? null : null);
 
     db.prepare(`

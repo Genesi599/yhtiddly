@@ -269,7 +269,8 @@ async function syncOnce() {
         emit({ phase: 'push', status: 'starting', pushTotal: 0, pushDone: 0 });
 
         // --- Push phase ---
-        const dirty = db.getDirty();
+        const NOSYNC = new Set(['$:/StoryList']);
+        const dirty = db.getDirty().filter(d => !NOSYNC.has(d.title));
         for (let i = 0; i < dirty.length; i++) {
             const d = dirty[i];
             emit({ phase: 'push', status: 'pushing', pushTotal: dirty.length, pushDone: i });

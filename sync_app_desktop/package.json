@@ -6,9 +6,9 @@
   "scripts": {
     "start": "electron .",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
-    "pack:win": "electron-packager . TWSync --platform=win32 --arch=x64 --out=dist --overwrite --icon=ui/tray-icon.png --app-copyright=\"yh109\"",
-    "pack:mac": "electron-packager . TWSync --platform=darwin --arch=x64 --out=dist --overwrite --icon=ui/tray-icon.png",
-    "pack:linux": "electron-packager . TWSync --platform=linux --arch=x64 --out=dist --overwrite"
+    "pack:win": "electron-packager . TWSync --platform=win32 --arch=x64 --out=dist --overwrite --icon=ui/app-icon.ico --app-copyright=\"yh109\" --ignore=\"^/dist\" --ignore=\"^\\.git\" --ignore=\"^/\\.\" --ignore=\"README\" --prune=true && node scripts/set-icon.js",
+    "pack:mac": "electron-packager . TWSync --platform=darwin --arch=x64 --out=dist --overwrite --icon=ui/tray-icon.png --ignore=\"^/dist\" --ignore=\"^\\.git\" --prune=true",
+    "pack:linux": "electron-packager . TWSync --platform=linux --arch=x64 --out=dist --overwrite --ignore=\"^/dist\" --ignore=\"^\\.git\" --prune=true"
   },
   "author": "yh109",
   "license": "MIT",
