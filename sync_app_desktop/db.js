@@ -278,7 +278,11 @@ function putTiddler(fields, source = 'local', revision = null) {
 
     if (!preserveLocal) {
         tiddlerStore.writeByFilename(filename, fields);
-        _fileCache.set(filename, Object.assign({}, fields));
+        // Cache the normalised (string-valued) version that was written to disk,
+        // not the raw fields object which may contain arrays or plain objects from
+        // the remote JSON. Serving non-string values to TW causes garbled field
+        // display (e.g. "[object Object]" spread into indexed numeric keys 0..14).
+        _fileCache.set(filename, tiddlerStore.parse(tiddlerStore.serialize(fields)));
     }
 
     const header = Object.assign({}, fields);
@@ -343,7 +347,10 @@ function bulkPutRemote(tiddlers) {
             if (!existing || existing.dirty !== 1) {
                 try {
                     tiddlerStore.writeByFilename(filename, item);
-                    _fileCache.set(filename, Object.assign({}, item));
+                    // Cache the normalised version (string values only) so that listFat()
+                    // always serves well-typed data to TW, regardless of what the remote
+                    // JSON contained (arrays, plain objects, etc.).
+                    _fileCache.set(filename, tiddlerStore.parse(tiddlerStore.serialize(item)));
                 }
                 catch (e) { console.warn('[db] bulkPut: write failed for', title, e.message); continue; }
             }
@@ -621,7 +628,11 @@ async function warmFileCache(progressCb) {
     for (let i = 0; i < rows.length; i += CONCURRENCY) {
         const batch = rows.slice(i, i + CONCURRENCY);
         await Promise.all(batch.map(async (r) => {
-            if (r.filename && !_fileCache.has(r.filename)) {
+            if (r.filename) {
+                // Always overwrite — the .tid file on disk is authoritative.
+                // Without this, entries set by initialFullSync() (potentially with
+                // non-string values from the remote JSON) would never be replaced
+                // by the correct, string-normalised versions from disk.
                 const fields = await tiddlerStore.readByFilenameAsync(r.filename);
                 if (fields) _fileCache.set(r.filename, fields);
             }

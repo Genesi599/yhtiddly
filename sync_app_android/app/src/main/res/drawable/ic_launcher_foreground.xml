@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- TW monogram on dark teal background -->
+    <!-- T -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M22,32 L50,32 L50,38 L39,38 L39,76 L33,76 L33,38 L22,38 Z" />
+    <!-- W -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,32 L61,32 L68,64 L75,32 L82,32 L75,76 L69,76 L64,50 L59,76 L53,76 L46,32 L53,32 L57,60 Z" />
+</vector>

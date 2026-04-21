@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TW同步</string>
+
+    <!-- Settings activity -->
+    <string name="title_settings">设置</string>
+    <string name="label_remote_url">远程服务器地址</string>
+    <string name="hint_remote_url">https://example.com</string>
+    <string name="label_username">用户名（可选）</string>
+    <string name="hint_username">留空则匿名访问</string>
+    <string name="label_password">密码（可选）</string>
+    <string name="hint_password">留空则无密码</string>
+    <string name="btn_save">保存并重启</string>
+    <string name="settings_saved">设置已保存</string>
+    <string name="error_url_required">请输入远程服务器地址</string>
+
+    <!-- Main activity -->
+    <string name="menu_sync">立即同步</string>
+    <string name="menu_reload">刷新页面</string>
+    <string name="menu_settings">设置</string>
+
+    <!-- Sync status -->
+    <string name="initial_sync_starting">正在初始化，请稍候…</string>
+    <string name="initial_sync_progress">正在同步：%1$d / %2$d（%3$d%%）</string>
+    <string name="initial_sync_done">初始同步完成</string>
+    <string name="initial_sync_error">初始同步失败：%1$s</string>
+    <string name="syncing">正在同步…</string>
+    <string name="sync_done">同步完成：推送 %1$d 拉取 %2$d 删除 %3$d 移除 %4$d</string>
+    <string name="sync_error">同步失败：%1$s</string>
+
+    <!-- Errors -->
+    <string name="server_start_failed">本地服务器启动失败</string>
+</resources>

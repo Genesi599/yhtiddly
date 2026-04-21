@@ -99,7 +99,15 @@ function serialize(fields) {
     for (const k of keys) {
         let v = fields[k];
         if (v == null) continue;
-        if (k === 'tags' && Array.isArray(v)) v = quoteTagsField(v);
+        if (Array.isArray(v)) {
+            // All array-valued fields (tags, list, or any custom list field) use TW
+            // list format: space-separated items, [[brackets]] for items with spaces.
+            v = quoteTagsField(v);
+        } else if (typeof v === 'object') {
+            // Plain objects: JSON-encode to preserve structure rather than coercing
+            // to the useless "[object Object]" string.
+            v = JSON.stringify(v);
+        }
         // Header lines must be single-line. Rare, but guard anyway.
         v = String(v).replace(/\r?\n/g, ' ');
         header.push(k + ': ' + v);
