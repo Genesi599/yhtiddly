@@ -14,6 +14,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
@@ -345,7 +346,7 @@ class SyncEngine(private val db: AppDatabase) {
             db.metaDao().set(MetaEntity("initial-sync-complete", "1"))
             db.metaDao().set(MetaEntity("last-sync", System.currentTimeMillis().toString()))
         }
-        Log.i(TAG, "initial: done, saved $done")
+        Log.i(TAG, "initial: done, saved ${doneCount.get()}")
     }
 
     private suspend fun tryBulkFetch(progressCb: (Int, Int) -> Unit): List<Map<String, Any?>>? {
@@ -485,8 +486,8 @@ class SyncEngine(private val db: AppDatabase) {
                                         val entity = fieldsToEntity(fields, rev, dirty = 0)
                                         db.tiddlerDao().upsert(entity)
                                         report.incPulled()
-                                    }
-                                }
+                                    } else { /* local is dirty, skip */ }
+                                } else { /* not found on remote */ }
                             } catch (e: Exception) {
                                 report.errors.add("pull $title: ${e.message}")
                                 Log.w(TAG, "pull error for $title", e)
@@ -507,7 +508,13 @@ class SyncEngine(private val db: AppDatabase) {
             }
 
             withContext(Dispatchers.IO) {
-                db.metaDao().set(MetaEntity("last-sync", System.currentTimeMillis().toString()))
+                val now = System.currentTimeMillis()
+                db.metaDao().set(MetaEntity("last-sync", now.toString()))
+                db.metaDao().set(MetaEntity("last-sync-pushed", report.pushed.toString()))
+                db.metaDao().set(MetaEntity("last-sync-pulled", report.pulled.toString()))
+                db.metaDao().set(MetaEntity("last-sync-deleted", report.deleted.toString()))
+                db.metaDao().set(MetaEntity("last-sync-removed", report.removed.toString()))
+                db.metaDao().set(MetaEntity("last-sync-errors", report.errors.joinToString("\n")))
             }
 
         } catch (e: Exception) {

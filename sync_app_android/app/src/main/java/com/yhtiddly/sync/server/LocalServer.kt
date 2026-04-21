@@ -22,9 +22,31 @@ import java.util.concurrent.TimeUnit
 
 private const val TAG = "LocalServer"
 
-class LocalServer(port: Int, private val db: AppDatabase) : NanoHTTPD(port) {
+private val LOADING_HTML = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta http-equiv="refresh" content="3;url=/">
+<title>TW同步 - 加载中</title>
+<style>
+body{margin:0;display:flex;align-items:center;justify-content:center;
+height:100vh;font-family:sans-serif;background:#1a6b5c;color:#fff;}
+.box{text-align:center;padding:2em;}
+h2{font-size:1.5em;margin-bottom:.5em;}
+p{opacity:.8;margin:.3em 0;}
+.spinner{width:40px;height:40px;border:4px solid rgba(255,255,255,.3);
+border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;margin:1.5em auto;}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style></head>
+<body><div class="box">
+<div class="spinner"></div>
+<h2>TW同步</h2>
+<p>正在从服务器加载 TiddlyWiki…</p>
+<p style="font-size:.85em;opacity:.6">首次加载需要一点时间，页面将自动刷新</p>
+</div></body></html>""".trimIndent()
+
+class LocalServer(port: Int, private val db: AppDatabase, private val cacheDir: java.io.File) : NanoHTTPD(port) {
 
     private val gson = Gson()
+    private val isFetchingHtml = java.util.concurrent.atomic.AtomicBoolean(false)
+
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
@@ -210,6 +232,25 @@ class LocalServer(port: Int, private val db: AppDatabase) : NanoHTTPD(port) {
 
     // ---- Main HTML (serve cached or fetch + inject patch) ----
 
+    // ---- File-backed body helpers ----
+
+    private fun bodyFile(url: String): java.io.File {
+        val safe = url.replace(Regex("[^a-zA-Z0-9._-]"), "_").take(80)
+        return java.io.File(cacheDir, "hc_$safe.bin")
+    }
+
+    private fun writeBody(url: String, bytes: ByteArray): String {
+        cacheDir.mkdirs()
+        val f = bodyFile(url)
+        f.writeBytes(bytes)
+        return f.absolutePath
+    }
+
+    private fun readBody(path: String): ByteArray? =
+        try { java.io.File(path).readBytes() } catch (e: Exception) { null }
+
+    // ---- Main HTML serving ----
+
     private fun serveMainHtml(session: IHTTPSession, uri: String): Response {
         val cacheKey = "/"
         val cached = runBlocking { db.httpCacheDao().get(cacheKey) }
@@ -217,21 +258,34 @@ class LocalServer(port: Int, private val db: AppDatabase) : NanoHTTPD(port) {
         val REVALIDATE_AFTER = 10 * 60 * 1000L
 
         if (cached != null) {
-            // Schedule background revalidation if stale (fire-and-forget)
-            if (now - cached.updatedAt > REVALIDATE_AFTER) {
-                Thread {
-                    try { revalidateHtmlCache(cacheKey, cached.etag, cached.lastModified) }
-                    catch (e: Exception) { Log.w(TAG, "Background revalidation failed", e) }
-                }.start()
+            val bodyBytes = readBody(cached.bodyPath)
+            if (bodyBytes != null) {
+                // Schedule background revalidation if stale (fire-and-forget)
+                if (now - cached.updatedAt > REVALIDATE_AFTER) {
+                    Thread {
+                        try { revalidateHtmlCache(cacheKey, cached.etag, cached.lastModified) }
+                        catch (e: Exception) { Log.w(TAG, "Background revalidation failed", e) }
+                    }.start()
+                }
+                val html = bodyBytes.toString(Charsets.UTF_8)
+                val patched = injectPatch(html)
+                val bytes = patched.toByteArray(Charsets.UTF_8)
+                return newFixedLengthResponse(Status.OK, "text/html; charset=utf-8", bytes.inputStream(), bytes.size.toLong())
             }
-            val html = cached.body.toString(Charsets.UTF_8)
-            val patched = injectPatch(html)
-            val bytes = patched.toByteArray(Charsets.UTF_8)
-            return newFixedLengthResponse(Status.OK, "text/html; charset=utf-8", bytes.inputStream(), bytes.size.toLong())
         }
 
-        // Not cached: fetch from remote
-        return fetchAndCacheHtml(cacheKey)
+        // Not cached: kick off background fetch, return loading page immediately
+        if (isFetchingHtml.compareAndSet(false, true)) {
+            Log.i(TAG, "HTML not cached — fetching from remote in background")
+            Thread {
+                try { fetchAndCacheHtml(cacheKey) }
+                catch (e: Exception) { Log.e(TAG, "Background HTML fetch failed", e) }
+                finally { isFetchingHtml.set(false) }
+            }.start()
+        }
+        val bytes = LOADING_HTML.toByteArray(Charsets.UTF_8)
+        return newFixedLengthResponse(Status.OK, "text/html; charset=utf-8",
+            bytes.inputStream(), bytes.size.toLong())
     }
 
     private fun revalidateHtmlCache(cacheKey: String, etag: String?, lastModified: String?) {
@@ -239,7 +293,7 @@ class LocalServer(port: Int, private val db: AppDatabase) : NanoHTTPD(port) {
         if (cfg.remoteUrl.isBlank()) return
 
         val reqBuilder = Request.Builder().url(cfg.remoteUrl + "/")
-        cfg.authHeader()?.let { reqBuilder.header("Authorization", it) }
+        AppConfig.authHeader()?.let { reqBuilder.header("Authorization", it) }
         if (!etag.isNullOrBlank()) reqBuilder.header("If-None-Match", etag)
         if (!lastModified.isNullOrBlank()) reqBuilder.header("If-Modified-Since", lastModified)
 
@@ -258,13 +312,14 @@ class LocalServer(port: Int, private val db: AppDatabase) : NanoHTTPD(port) {
                 val headersJson = buildHeadersJson(resp.headers)
                 val newEtag = resp.header("Etag")
                 val newLastMod = resp.header("Last-Modified")
+                val path = writeBody(cacheKey, body)
                 runBlocking {
                     db.httpCacheDao().put(
                         HttpCacheEntity(
                             url = cacheKey,
                             status = 200,
                             headers = headersJson,
-                            body = body,
+                            bodyPath = path,
                             etag = newEtag,
                             lastModified = newLastMod,
                             updatedAt = System.currentTimeMillis()
@@ -286,20 +341,21 @@ class LocalServer(port: Int, private val db: AppDatabase) : NanoHTTPD(port) {
 
         return try {
             val reqBuilder = Request.Builder().url(cfg.remoteUrl + "/")
-            cfg.authHeader()?.let { reqBuilder.header("Authorization", it) }
+            AppConfig.authHeader()?.let { reqBuilder.header("Authorization", it) }
             reqBuilder.header("Accept", "text/html,*/*")
 
             val response = httpClient.newCall(reqBuilder.build()).execute()
             response.use { resp ->
                 if (!resp.isSuccessful) {
                     val msg = "Remote returned HTTP ${resp.code}"
-                    return newFixedLengthResponse(Status.BAD_GATEWAY, "text/plain", msg)
+                    return newFixedLengthResponse(Status.INTERNAL_ERROR, "text/plain", msg)
                 }
 
                 val bodyBytes = resp.body?.bytes() ?: byteArrayOf()
                 val headersJson = buildHeadersJson(resp.headers)
                 val etag = resp.header("Etag")
                 val lastMod = resp.header("Last-Modified")
+                val path = writeBody(cacheKey, bodyBytes)
 
                 runBlocking {
                     db.httpCacheDao().put(
@@ -307,7 +363,7 @@ class LocalServer(port: Int, private val db: AppDatabase) : NanoHTTPD(port) {
                             url = cacheKey,
                             status = 200,
                             headers = headersJson,
-                            body = bodyBytes,
+                            bodyPath = path,
                             etag = etag,
                             lastModified = lastMod,
                             updatedAt = System.currentTimeMillis()
@@ -325,15 +381,18 @@ class LocalServer(port: Int, private val db: AppDatabase) : NanoHTTPD(port) {
             // Try stale cache as last resort
             val stale = runBlocking { db.httpCacheDao().get(cacheKey) }
             if (stale != null) {
-                Log.w(TAG, "Serving stale cache as fallback")
-                val html = stale.body.toString(Charsets.UTF_8)
-                val patched = injectPatch(html)
-                val bytes = patched.toByteArray(Charsets.UTF_8)
-                return newFixedLengthResponse(Status.OK, "text/html; charset=utf-8", bytes.inputStream(), bytes.size.toLong())
+                val staleBytes = readBody(stale.bodyPath)
+                if (staleBytes != null) {
+                    Log.w(TAG, "Serving stale cache as fallback")
+                    val html = staleBytes.toString(Charsets.UTF_8)
+                    val patched = injectPatch(html)
+                    val bytes = patched.toByteArray(Charsets.UTF_8)
+                    return newFixedLengthResponse(Status.OK, "text/html; charset=utf-8", bytes.inputStream(), bytes.size.toLong())
+                }
             }
             val msg = "代理错误: ${e.message}\n\n远程服务器响应过慢或不可达。请检查网络或设置中的 URL。"
             val bytes = msg.toByteArray(Charsets.UTF_8)
-            newFixedLengthResponse(Status.BAD_GATEWAY, "text/plain; charset=utf-8", bytes.inputStream(), bytes.size.toLong())
+            newFixedLengthResponse(Status.INTERNAL_ERROR, "text/plain; charset=utf-8", bytes.inputStream(), bytes.size.toLong())
         }
     }
 
@@ -358,9 +417,10 @@ class LocalServer(port: Int, private val db: AppDatabase) : NanoHTTPD(port) {
                         catch (e: Exception) { Log.w(TAG, "BG revalidate failed for $uri", e) }
                     }.start()
                 }
+                val cachedBytes = readBody(cached.bodyPath) ?: byteArrayOf()
                 val response = newFixedLengthResponse(Status.OK,
                     extractContentType(cached.headers),
-                    cached.body.inputStream(), cached.body.size.toLong())
+                    cachedBytes.inputStream(), cachedBytes.size.toLong())
                 response.addHeader("X-TW-Cache", "HIT")
                 return response
             }
@@ -376,7 +436,7 @@ class LocalServer(port: Int, private val db: AppDatabase) : NanoHTTPD(port) {
                 if (k.lowercase() in skipHeaders) continue
                 reqBuilder.header(k, v)
             }
-            cfg.authHeader()?.let { reqBuilder.header("Authorization", it) }
+            AppConfig.authHeader()?.let { reqBuilder.header("Authorization", it) }
 
             when (method) {
                 Method.GET, Method.HEAD -> { /* no body */ }
@@ -398,13 +458,14 @@ class LocalServer(port: Int, private val db: AppDatabase) : NanoHTTPD(port) {
                     !uri.startsWith("/recipes/") && !uri.startsWith("/bags/") &&
                     !uri.startsWith("/status") && !uri.startsWith("/_sync/")) {
                     val headersJson = buildHeadersJson(resp.headers)
+                    val path = writeBody(uri, bodyBytes)
                     runBlocking {
                         db.httpCacheDao().put(
                             HttpCacheEntity(
                                 url = uri,
                                 status = 200,
                                 headers = headersJson,
-                                body = bodyBytes,
+                                bodyPath = path,
                                 etag = resp.header("Etag"),
                                 lastModified = resp.header("Last-Modified"),
                                 updatedAt = System.currentTimeMillis()
@@ -429,7 +490,7 @@ class LocalServer(port: Int, private val db: AppDatabase) : NanoHTTPD(port) {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Proxy error for $uri", e)
-            newFixedLengthResponse(Status.BAD_GATEWAY, "text/plain", "Proxy error: ${e.message}")
+            newFixedLengthResponse(Status.INTERNAL_ERROR, "text/plain", "Proxy error: ${e.message}")
         }
     }
 

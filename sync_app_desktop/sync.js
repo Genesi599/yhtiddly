@@ -57,13 +57,40 @@ function normalizeTiddlerResponse(data, knownTitle, revisionOverride) {
     if (!data) return null;
     let fields;
     let revision = revisionOverride || data.revision || null;
-    if (data.fields && typeof data.fields === 'object') {
-        fields = data.fields;
+
+    if (data.title) {
+        // Standard flat response (most servers, including yhtiddly.fun).
+        // Some TiddlyWeb implementations also attach a nested `fields` sub-object
+        // containing non-standard field names. Merge those in WITHOUT overwriting
+        // the top-level fields, which are authoritative.
+        fields = Object.assign({}, data);
+        if (data.fields && typeof data.fields === 'object' && !Array.isArray(data.fields)) {
+            for (const [k, v] of Object.entries(data.fields)) {
+                if (!(k in fields)) fields[k] = v;
+            }
+        }
+        // Strip server-only meta keys that are not tiddler fields.
+        delete fields.bag;
+        delete fields.revision;
+        delete fields.fields;   // already merged above
+    } else if (data.fields && typeof data.fields === 'object' && !Array.isArray(data.fields)) {
+        // Old-style wrapped response: { fields: { title:…, text:…, … }, bag:…, revision:… }
+        fields = Object.assign({}, data.fields);
     } else if (typeof data === 'object') {
-        fields = data;
+        fields = Object.assign({}, data);
+        delete fields.bag;
+        delete fields.revision;
     } else {
         return null;
     }
+
+    // Strip garbled numeric-index keys that arise when a plain object is
+    // accidentally spread into a fields map (e.g. "[object Object]" → 0..14).
+    // Tiddler field names cannot legally start with a digit.
+    for (const k of Object.keys(fields)) {
+        if (/^\d+$/.test(k)) delete fields[k];
+    }
+
     if (!fields.title) fields.title = knownTitle;
     return { revision, fields };
 }
@@ -129,6 +156,7 @@ async function fetchRemoteTiddler(title) {
 }
 
 async function pushTiddler(title, fields) {
+    if (!fields) throw new Error('pushTiddler: fields is null for ' + title);
     const url = remoteUrl('/recipes/default/tiddlers/' + encodeURIComponent(title));
     const body = JSON.stringify(fields);
     const res = await fetch(url, {
@@ -270,7 +298,7 @@ async function syncOnce() {
 
         // --- Push phase ---
         const NOSYNC = new Set(['$:/StoryList']);
-        const dirty = db.getDirty().filter(d => !NOSYNC.has(d.title));
+        const dirty = db.getDirty().filter(d => !NOSYNC.has(d.title) && !db.isDraft(d.fields));
         for (let i = 0; i < dirty.length; i++) {
             const d = dirty[i];
             emit({ phase: 'push', status: 'pushing', pushTotal: dirty.length, pushDone: i });
@@ -280,6 +308,9 @@ async function syncOnce() {
                     await pushDeletion(d.title);
                     db.purgeTombstone(d.title);
                     report.deleted++;
+                } else if (!d.fields) {
+                    console.warn('[sync] skip push: null fields (missing file) for', d.title);
+                    report.errors.push({ title: d.title, op: 'put', msg: 'missing local file — skipped' });
                 } else {
                     console.log('[sync] push update:', d.title);
                     const newRev = await pushTiddler(d.title, d.fields);
@@ -415,7 +446,7 @@ async function pushOnly() {
     const report = { pushed: 0, deleted: 0, errors: [] };
 
     try {
-        const dirty = db.getDirty();
+        const dirty = db.getDirty().filter(d => !db.isDraft(d.fields));
         // Concurrent push
         const CONCURRENCY = 5;
         const queue = dirty.slice();

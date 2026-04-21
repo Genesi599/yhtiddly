@@ -321,10 +321,20 @@ select.bk-select { padding: 5px 8px; border: 1px solid #d0d4db; border-radius: 5
     }
     function fmtModified(s) {
         if (!s) return '';
-        const m = s.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})/);
-        if (m) return m[1]+'-'+m[2]+'-'+m[3]+' '+m[4]+':'+m[5];
-        try { return new Date(s).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}); }
-        catch(e){ return s.slice(0,16); }
+        const pad = n => String(n).padStart(2, '0');
+        // TW compact format: YYYYMMDDHHmmss[SSS] — digits are UTC (see TW5
+        // boot.js $tw.utils.stringifyDate, which uses getUTC*). We must
+        // convert to local time for display, not render the digits verbatim.
+        const m = s.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})?(\d{3})?$/);
+        let d;
+        if (m) {
+            d = new Date(Date.UTC(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +(m[6]||0), +(m[7]||0)));
+        } else {
+            // ISO 8601 / RFC 2822: Date parses its own TZ info.
+            d = new Date(s);
+        }
+        if (isNaN(d)) return s.slice(0, 16);
+        return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes());
     }
     function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 

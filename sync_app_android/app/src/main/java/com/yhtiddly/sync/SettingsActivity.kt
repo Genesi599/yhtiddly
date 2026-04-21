@@ -1,14 +1,11 @@
 package com.yhtiddly.sync
 
 import android.os.Bundle
+import android.webkit.WebStorage
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.lifecycleScope
 import com.yhtiddly.sync.config.AppConfig
 import com.yhtiddly.sync.databinding.ActivitySettingsBinding
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -57,15 +54,8 @@ class SettingsActivity : AppCompatActivity() {
             )
         )
 
-        // Clear HTTP cache so the new remote URL is fetched fresh
-        val db = (application as App).database
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                db.httpCacheDao().clear()
-            }
-            Toast.makeText(this@SettingsActivity, R.string.settings_saved, Toast.LENGTH_SHORT).show()
-            finish()
-        }
+        Toast.makeText(this, R.string.settings_saved, Toast.LENGTH_SHORT).show()
+        finish()
     }
 
     override fun onSupportNavigateUp(): Boolean {

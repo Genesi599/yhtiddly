@@ -39,28 +39,8 @@ data class HttpCacheEntity(
     @PrimaryKey val url: String,
     val status: Int,
     val headers: String,
-    val body: ByteArray,
+    val bodyPath: String,       // path to file containing body bytes
     val etag: String?,
     val lastModified: String?,
     val updatedAt: Long
-) {
-    override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (other !is HttpCacheEntity) return false
-        return url == other.url && status == other.status &&
-               headers == other.headers && body.contentEquals(other.body) &&
-               etag == other.etag && lastModified == other.lastModified &&
-               updatedAt == other.updatedAt
-    }
-
-    override fun hashCode(): Int {
-        var result = url.hashCode()
-        result = 31 * result + status
-        result = 31 * result + headers.hashCode()
-        result = 31 * result + body.contentHashCode()
-        result = 31 * result + (etag?.hashCode() ?: 0)
-        result = 31 * result + (lastModified?.hashCode() ?: 0)
-        result = 31 * result + updatedAt.hashCode()
-        return result
-    }
-}
+)

@@ -51,9 +51,11 @@ function buildApp() {
         let title; try { title = decodeURIComponent(req.params.title); } catch(e) { title = req.params.title; }
         const t = db.getTiddler(title);
         if (!t) return res.status(404).end();
-        // TW expects the fields object with Etag-like revision
         res.set('Etag', '"default/' + encodeURIComponent(title) + '/' + t.revision + ':"');
-        res.json(t.fields);
+        // bag is fixed server-side to 'default'. Merge fields first, then force
+        // bag — so a stale `bag` accidentally stored on a tiddler can never
+        // misroute the adaptor's DELETE (which uses the bag from GET).
+        res.json(Object.assign({}, t.fields, { bag: 'default' }));
     });
 
     // --- PUT tiddler (save) ---
@@ -73,17 +75,29 @@ function buildApp() {
             } else {
                 return res.status(400).send('empty body');
             }
-            // Some TW versions send {fields:{...}} wrapper, others send flat object
-            if (fields.fields && !fields.title) fields = fields.fields;
+            // Mirror TW5's put-tiddler.js reference: unconditionally pull up any
+            // `fields` sub-object (the adaptor always sends non-standard fields
+            // there) and drop any client-sent revision. The client's `title` is
+            // authoritative when present; otherwise fall back to the URL param.
+            if (fields.fields && typeof fields.fields === 'object' && !Array.isArray(fields.fields)) {
+                for (const k of Object.keys(fields.fields)) {
+                    if (!(k in fields)) fields[k] = fields.fields[k];
+                }
+                delete fields.fields;
+            }
+            if (fields.revision !== undefined) delete fields.revision;
             if (!fields.title) fields.title = title;
 
             // Stamp modified if not set
             if (!fields.modified) fields.modified = new Date().toISOString();
 
-            db.putTiddler(fields, 'local');
-
-            // Use any monotonically-increasing number for revision
-            const revision = String(Date.now());
+            // Bump a per-tiddler monotonic revision. Matches TW5's
+            // `state.wiki.getChangeCount(title)` contract, so the Etag we
+            // return here is the same revision that a subsequent skinny-list
+            // poll will report — which means TW's syncer sees no mismatch
+            // and does not spuriously requeue a load for the just-saved
+            // tiddler.
+            const revision = db.putTiddler(fields, 'local');
             res.set('Etag', '"default/' + encodeURIComponent(title) + '/' + revision + ':"');
             res.status(204).end();
         } catch (e) {
@@ -244,14 +258,49 @@ function buildApp() {
         const scriptTagIdx = text.lastIndexOf('<script', bootCallIdx);
         if (scriptTagIdx < 0) return body;
 
-        // TW 5.3.8 changed the sync mechanism: instead of storeTiddler(fields, isSkinny),
-        // it uses handleLazyLoadEvent + canSyncFromServer (SyncFromServerTask) which compares
-        // revision strings. Our local DB has mismatched revisions ("4.0" vs "4", "0" vs "3"),
-        // causing ALL 18000+ tiddlers to be queued for lazy-loading. Since the HTML embedded
-        // store already contains all tiddlers with full text, we can safely disable both:
-        //   1. handleLazyLoadEvent → no-op (no individual XHRs when text is accessed)
-        //   2. canSyncFromServer → false (no bulk SyncFromServerTask triggered by getStatus)
-        // TW still handles saves correctly (SaveTiddlerTask is unaffected).
+        // Our /tiddlers.json returns FAT tiddlers (with text). TW should never
+        // lazy-load those individually.  Three code paths in TW 5.3.x can still
+        // trigger individual GETs:
+        //
+        //   a) storeTiddler(fields, isSkinny=true) with a revision mismatch
+        //      → directly enqueues a SyncFromServerTask
+        //   b) handleLazyLoadEvent (fired when TW tries to render missing text)
+        //      → enqueues a SyncFromServerTask
+        //   c) syncFromServer / canSyncFromServer polling loop
+        //      → bulk revision compare, queues tasks for every changed tiddler
+        //
+        // We block all three after $tw.syncer is assigned:
+        //   1. storeTiddler patch — fat tiddlers (fields.text != null) are always
+        //      treated as non-skinny, so no task is queued on revision mismatch.
+        //   2. enqueueTask guard — drop any residual "load-from-server" tasks.
+        //   3. handleLazyLoadEvent → no-op (belt-and-suspenders).
+        //   4. canSyncFromServer → false (disables the polling path).
+        //   5. Kill the polling timer.
+        // TW save operations (SaveTiddlerTask) are unaffected.
+        // Three code paths in TW 5.3.x trigger individual tiddler GETs:
+        //
+        //   a) SyncFromServerTask.run() — calls getSkinnyTiddlers(), then for every
+        //      tiddler whose revision changed it unconditionally adds the title to
+        //      titlesToBeLoaded (syncer.js:682), regardless of whether the incoming
+        //      tiddler already had text.  chooseNextTask() then pops from that map
+        //      and creates LoadTiddlerTask, which calls syncadaptor.loadTiddler().
+        //
+        //   b) handleLazyLoadEvent — fired when TW tries to render missing text.
+        //
+        //   c) The poll timer — triggerTimeout(pollTimerInterval) re-runs
+        //      processTaskQueue() periodically.
+        //
+        // We block all three after $tw.syncer is assigned:
+        //   1. storeTiddler patch — fat tiddlers (fields.text != null) always stored
+        //      as non-skinny, so no spurious skinny-store on revision mismatch.
+        //   2. loadTiddler patch — if we already have text, call back with null
+        //      immediately (LoadTiddlerTask skips the XHR when tiddlerFields is null).
+        //   3. handleLazyLoadEvent → no-op.
+        //   4. canSyncFromServer → false (blocks syncFromServer() from setting
+        //      forceSyncFromServer and calling processTaskQueue).
+        //   5. pollTimerInterval → huge value so the timestamp condition in
+        //      chooseNextTask() never fires (syncer.js:502).
+        //   6. Clear the pending task timer (property is taskTimerId, not pollTimerId).
         const script = '<script>(function(){' +
             'if(!window.$tw)return;' +
             'Object.defineProperty($tw,"syncer",{configurable:true,enumerable:true,' +
@@ -259,13 +308,35 @@ function buildApp() {
                 'set:function(v){' +
                     '$tw.__syncer__=v;' +
                     'if(!v)return;' +
-                    // No lazy-load XHRs: wiki already has all tiddlers fat from the embedded HTML store
+                    // 1. storeTiddler: fat tiddlers (with text) are never skinny
+                    'if(v.storeTiddler){' +
+                        'var _st=v.storeTiddler.bind(v);' +
+                        'v.storeTiddler=function(f,skinny){' +
+                            'return _st(f,skinny&&!(f&&f.text!=null));' +
+                        '};' +
+                    '}' +
+                    // 2. loadTiddler: skip XHR if we already have text
+                    //    LoadTiddlerTask.run() at syncer.js:609 skips storeTiddler
+                    //    when tiddlerFields is null, so this is safe.
+                    'if(v.syncadaptor&&v.syncadaptor.loadTiddler){' +
+                        'var _lt=v.syncadaptor.loadTiddler.bind(v.syncadaptor);' +
+                        'v.syncadaptor.loadTiddler=function(title,cb){' +
+                            'var t=$tw.wiki&&$tw.wiki.getTiddler(title);' +
+                            'if(t&&t.fields&&t.fields.text!==undefined)return cb(null,null);' +
+                            'return _lt(title,cb);' +
+                        '};' +
+                    '}' +
+                    // 3. handleLazyLoadEvent → no-op
                     'v.handleLazyLoadEvent=function(){};' +
-                    // No bulk sync from server: revision format mismatch would queue 18000+ XHRs
+                    // 4. canSyncFromServer → false (blocks syncFromServer polling path)
                     'v.canSyncFromServer=function(){return false;};' +
-                    // Disable TW's own polling — sync.js handles server sync externally
-                    'v.syncFromServerInterval=999999999;' +
-                    'if(v.pollTimerId){clearTimeout(v.pollTimerId);v.pollTimerId=null;}' +
+                    // 5. pollTimerInterval: huge value so chooseNextTask timestamp
+                    //    condition (syncer.js:502) never fires in normal usage.
+                    //    NOTE: was wrongly named syncFromServerInterval before.
+                    'v.pollTimerInterval=999999999;' +
+                    // 6. Clear pending task timer.
+                    //    NOTE: TW uses taskTimerId, not pollTimerId.
+                    'if(v.taskTimerId){clearTimeout(v.taskTimerId);v.taskTimerId=null;}' +
                     'console.log("[patch] lazy-load and sync-from-server disabled");' +
                 '}' +
             '});' +

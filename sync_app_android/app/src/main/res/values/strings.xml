@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">TW同步</string>
+    <string name="app_name">yhtiddly</string>
 
     <!-- Settings activity -->
     <string name="title_settings">设置</string>
@@ -17,6 +17,7 @@
     <!-- Main activity -->
     <string name="menu_sync">立即同步</string>
     <string name="menu_reload">刷新页面</string>
+    <string name="menu_sync_status">同步状态</string>
     <string name="menu_settings">设置</string>
 
     <!-- Sync status -->

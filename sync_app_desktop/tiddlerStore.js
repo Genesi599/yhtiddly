@@ -86,7 +86,10 @@ function quoteTagsField(tags) {
     if (!tags) return '';
     if (typeof tags === 'string') return tags;
     if (!Array.isArray(tags)) return String(tags);
-    return tags.map(t => (/[\s\[\]]/.test(t) ? '[[' + t + ']]' : t)).join(' ');
+    // Match TW5's $tw.utils.stringifyList (boot/boot.js): wrap entries that
+    // contain any whitespace (except U+00A0 NBSP) in [[…]]. Wrapping on [ or ]
+    // would mangle a tag like `foo[bar]` into `[[foo[bar]]]` on round-trip.
+    return tags.map(t => (/[^\S\xA0]/.test(String(t)) ? '[[' + t + ']]' : String(t))).join(' ');
 }
 
 // Serialize fields to a .tid string. All fields except `text` go in the
@@ -200,10 +203,23 @@ function scanAll() {
     return out;
 }
 
+// Return just the filenames of all .tid files — no content reads.
+function listFilenames() {
+    try { return fs.readdirSync(getDir()).filter(e => e.endsWith('.tid')); }
+    catch (e) { return []; }
+}
+
+// Last-modified time of a .tid file in ms epoch, or null if missing.
+function getMtime(filename) {
+    if (!filename) return null;
+    try { return fs.statSync(path.join(getDir(), filename)).mtimeMs; }
+    catch (e) { return null; }
+}
+
 module.exports = {
     init, getDir,
     titleToStem, decideFilename,
     serialize, parse,
     readByFilename, readByFilenameAsync, writeByFilename, removeByFilename,
-    scanAll
+    scanAll, listFilenames, getMtime
 };
