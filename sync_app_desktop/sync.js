@@ -331,6 +331,19 @@ async function syncOnce() {
 
         const localMap = db.getModifiedMap();
 
+        // Normalize revisions for comparison. The remote may send `1` as a
+        // JSON number, while the local DB might hold `'1.0'` as text (a
+        // legacy artefact from an older code path that stored the revision
+        // as a float). A naive `!==` strict compare treats these as
+        // different on every cycle and triggers endless re-pulls. Coerce
+        // both sides through `parseFloat` to a canonical number, then
+        // compare as numbers — `Number.isNaN` sentinels for "no revision".
+        const normRev = v => {
+            if (v === null || v === undefined || v === '' || v === '0' || v === 0) return null;
+            const n = typeof v === 'number' ? v : parseFloat(String(v));
+            return Number.isFinite(n) ? n : null;
+        };
+
         const toFetch = [];
         for (const title in remoteMap) {
             const r = remoteMap[title];
@@ -343,9 +356,12 @@ async function syncOnce() {
             const lMod = parseModified(l.modified);
             if (rMod > lMod) {
                 toFetch.push(title);
-            } else if (r.revision && l.revision && l.revision !== '0' &&
-                       r.revision !== l.revision && rMod >= lMod) {
-                toFetch.push(title);
+            } else {
+                const rRev = normRev(r.revision);
+                const lRev = normRev(l.revision);
+                if (rRev !== null && lRev !== null && rRev !== lRev && rMod >= lMod) {
+                    toFetch.push(title);
+                }
             }
         }
 

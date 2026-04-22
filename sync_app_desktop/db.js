@@ -374,6 +374,12 @@ function putTiddler(fields, source = 'local', revision = null) {
     if (source === 'local') {
         const prev = existing && existing.revision ? parseInt(existing.revision, 10) : 0;
         revision = String(Number.isFinite(prev) ? prev + 1 : 1);
+    } else if (revision !== null && revision !== undefined) {
+        // Canonicalize remote-supplied revision to an integer-valued string
+        // ('1' not '1.0'). Legacy rows stored floats as text, which made the
+        // sync loop think the remote was newer on every tick and re-pull.
+        const n = typeof revision === 'number' ? revision : parseFloat(String(revision));
+        revision = Number.isFinite(n) ? String(Math.trunc(n)) : String(revision);
     }
 
     // Conflict resolution: remote write vs local dirty changes → newer modified wins.
@@ -482,12 +488,21 @@ function bulkPutRemote(tiddlers) {
             const header = Object.assign({}, item);
             delete header.text;
 
+            // Canonicalize revision to integer-string form (strip any `.0`).
+            let rev = item.revision;
+            if (rev !== null && rev !== undefined && rev !== '') {
+                const n = typeof rev === 'number' ? rev : parseFloat(String(rev));
+                rev = Number.isFinite(n) ? String(Math.trunc(n)) : String(rev);
+            } else {
+                rev = '0';
+            }
+
             upsert.run({
                 title,
                 filename,
                 header_json: JSON.stringify(header),
                 text_cache: textCache,
-                revision: item.revision || '0',
+                revision: rev,
                 modified: item.modified || new Date().toISOString(),
                 last_synced: now,
                 file_mtime: fileMtime
