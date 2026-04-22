@@ -13,6 +13,7 @@ const https = require('https');
 const http = require('http');
 const db = require('./db');
 const config = require('./config');
+const events = require('./events');
 
 // Reuse TCP + TLS connections across the many probes we fire in the
 // system-override phase. Without this, each GET pays a fresh handshake,
@@ -467,8 +468,10 @@ async function pullSystemOverrides(titles, report) {
                 // declared shadow tiddlers. We only delete titles that
                 // WE ourselves expect as potential overrides; arbitrary
                 // `$:/` tiddlers aren't touched.
-                db.deleteTiddler(title, 'remote');
-                deleted++;
+                if (db.deleteTiddler(title, 'remote')) {
+                    events.broadcast('delete', { title });
+                    deleted++;
+                }
             }
             // (no local, no remote) → candidate shadow without override;
             // nothing to do — this is the common case for ~95% of titles.
@@ -639,8 +642,10 @@ async function syncOnce() {
             const dirtyRow = db.getRaw().prepare('SELECT dirty FROM tiddlers WHERE title = ?').get(title);
             if (!dirtyRow || dirtyRow.dirty !== 0) continue;
             console.log('[sync] remote delete detected:', title);
-            db.deleteTiddler(title, 'remote');
-            report.removed++;
+            if (db.deleteTiddler(title, 'remote')) {
+                events.broadcast('delete', { title });
+                report.removed++;
+            }
         }
 
         // --- Probe system-tiddler overrides hidden from the skinny list ---

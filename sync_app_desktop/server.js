@@ -12,6 +12,7 @@ const fetch = require('node-fetch');
 const db = require('./db');
 const config = require('./config');
 const sync = require('./sync');
+const events = require('./events');
 
 let server = null;
 let startedPort = null;
@@ -111,6 +112,14 @@ function buildApp() {
         let title; try { title = decodeURIComponent(req.params.title); } catch(e) { title = req.params.title; }
         db.deleteTiddler(title, 'local');
         res.status(204).end();
+    });
+
+    // --- SSE channel: backend → TW frontend signals (e.g. deletions) ---
+    // The injected HTML patch opens an EventSource on this endpoint; sync.js
+    // calls events.broadcast(...) whenever it detects a remote-originated
+    // delete, so the in-browser wiki can drop the tiddler without F5.
+    app.get('/tws-events', (req, res) => {
+        events.attach(res);
     });
 
     // --- Local sync control endpoints (used by settings UI) ---
@@ -337,6 +346,30 @@ function buildApp() {
                     // 6. Clear pending task timer.
                     //    NOTE: TW uses taskTimerId, not pollTimerId.
                     'if(v.taskTimerId){clearTimeout(v.taskTimerId);v.taskTimerId=null;}' +
+                    // 7. SSE listener — receive remote-originated deletes
+                    //    pushed by sync.js and drop the tiddler from the
+                    //    in-memory wiki so the UI updates without a page
+                    //    reload. We clear the syncer's tiddlerInfo entry
+                    //    BEFORE calling deleteTiddler, so the syncer does
+                    //    not enqueue a redundant DELETE back to our local
+                    //    server (titleIsSubjectToSyncing returns false
+                    //    once tiddlerInfo[title] is gone).
+                    'if(typeof EventSource!=="undefined"){' +
+                        'try{' +
+                            'var _es=new EventSource("/tws-events");' +
+                            '_es.addEventListener("delete",function(e){' +
+                                'try{' +
+                                    'var d=JSON.parse(e.data);' +
+                                    'var t=d&&d.title;' +
+                                    'if(!t||!$tw.wiki)return;' +
+                                    'if(v.tiddlerInfo)delete v.tiddlerInfo[t];' +
+                                    '$tw.wiki.deleteTiddler(t);' +
+                                    'console.log("[sse] remote deleted",t);' +
+                                '}catch(err){console.warn("[sse] delete handler error",err);}' +
+                            '});' +
+                            '_es.onerror=function(){/* EventSource auto-reconnects */};' +
+                        '}catch(err){console.warn("[sse] cannot open channel",err);}' +
+                    '}' +
                     'console.log("[patch] lazy-load and sync-from-server disabled");' +
                 '}' +
             '});' +

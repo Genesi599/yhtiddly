@@ -161,6 +161,21 @@ function init(dbPath, tiddlersDir) {
     ).run().changes;
     if (cleared) console.log('[db] cleared dirty flag on', cleared, 'draft tiddler(s)');
 
+    // Purge tombstoned drafts. Prior versions of deleteTiddler tombstoned
+    // drafts just like real tiddlers, but drafts are filtered out of the
+    // push queue — so `dirty=1, tombstone=1` rows would sit in the index
+    // forever. Match both the draft.of field and the title pattern so we
+    // catch rows where header_json was written before draft.of was set.
+    const purged = db.prepare(
+        "DELETE FROM tiddlers WHERE tombstone = 1 AND (" +
+        "header_json LIKE '%\"draft.of\"%' " +
+        "OR title GLOB 'Draft of ''*' " +
+        "OR title GLOB 'Draft of \"*' " +
+        "OR title GLOB 'Draft [0-9]* of ''*' " +
+        "OR title GLOB 'Draft [0-9]* of \"*')"
+    ).run().changes;
+    if (purged) console.log('[db] purged', purged, 'tombstoned draft row(s)');
+
     console.log('[db] initialized at', dbPath, '(tiddlers dir:', tiddlersDir + ')');
     return db;
 }
@@ -541,28 +556,47 @@ function bulkPutRemote(tiddlers) {
 // Delete. Local delete → tombstone (kept in index until remote confirms).
 // Remote delete → hard purge, unless local has dirty changes (keep user's
 // local edit; it'll re-PUT on next sync and recreate the remote tiddler).
+// Returns true if the row was actually removed/tombstoned, false if the
+// call was a no-op (title unknown, or remote-delete skipped to preserve a
+// dirty local edit). Callers use this to decide whether to broadcast a
+// deletion event to the browser.
 function deleteTiddler(title, source = 'local') {
     invalidateFatCache();
-    const row = db.prepare('SELECT filename, dirty FROM tiddlers WHERE title = ?').get(title);
-    if (!row) return;
+    const row = db.prepare('SELECT filename, dirty, header_json FROM tiddlers WHERE title = ?').get(title);
+    if (!row) return false;
 
-    if (source === 'local') {
+    // Drafts are local-only editor state and are never pushed to the remote
+    // (NOT_DRAFT_SQL filters them out of the dirty queue). Tombstoning one
+    // would leave a zombie row that no code path ever clears. Hard-delete.
+    let header = null;
+    try { header = JSON.parse(row.header_json); } catch (e) {}
+    const isDraftRow = DRAFT_TITLE_RE.test(title) || (header && header['draft.of']);
+
+    if (source === 'local' && !isDraftRow) {
         db.prepare('UPDATE tiddlers SET tombstone = 1, dirty = 1, modified = ? WHERE title = ?')
             .run(new Date().toISOString(), title);
         tiddlerStore.removeByFilename(row.filename);
         _fileCache.delete(row.filename);
-        return;
+        return true;
+    }
+    if (source === 'local' && isDraftRow) {
+        tiddlerStore.removeByFilename(row.filename);
+        _fileCache.delete(row.filename);
+        db.prepare('DELETE FROM tiddlers WHERE title = ?').run(title);
+        if (filenameCacheLC) filenameCacheLC.delete(row.filename.toLowerCase());
+        return true;
     }
 
     // source === 'remote'
     if (row.dirty === 1) {
         // Keep the local version; skip the delete.
-        return;
+        return false;
     }
     tiddlerStore.removeByFilename(row.filename);
     _fileCache.delete(row.filename);
     db.prepare('DELETE FROM tiddlers WHERE title = ?').run(title);
     if (filenameCacheLC) filenameCacheLC.delete(row.filename.toLowerCase());
+    return true;
 }
 
 // Remove tombstone row after remote confirmed the delete. File is already gone.
