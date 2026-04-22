@@ -8,7 +8,7 @@
 // - System tray with open/browser/settings/quit
 // - Graceful shutdown with final sync
 
-const { app, BrowserWindow, Tray, Menu, shell, ipcMain, nativeImage, dialog } = require('electron');
+const { app, BrowserWindow, Tray, Menu, shell, ipcMain, nativeImage, dialog, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -652,6 +652,15 @@ function registerIpc() {
 async function bootstrap() {
     const userData = app.getPath('userData');
     fs.mkdirSync(userData, { recursive: true });
+
+    // Wipe the Chromium session disk cache on every startup. Our local server
+    // is the only origin the app loads from, and its HTML embeds the full
+    // wiki (`$tw.preloadTiddlers`) — when admin-script PUTs update backend
+    // tiddlers, a cached HTML response would show stale state forever until
+    // the user hits Ctrl+Shift+R. Clearing at boot guarantees the TW window
+    // always renders against the latest server-side content.
+    try { await session.defaultSession.clearCache(); }
+    catch (e) { console.warn('[main] clearCache failed (non-fatal):', e.message); }
 
     config.init(userData);
     const cfg = config.get();

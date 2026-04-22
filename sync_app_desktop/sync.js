@@ -455,6 +455,10 @@ async function pullSystemOverrides(titles, report) {
                 const lMod = local ? parseModified(local.modified) : 0;
                 if (!local || rMod > lMod) {
                     db.putTiddler(full.fields, 'remote', full.revision);
+                    events.broadcast('update', Object.assign({}, full.fields, {
+                        revision: full.revision != null ? String(full.revision) : '0',
+                        bag: 'default'
+                    }));
                     pulled++;
                 }
             } else if (local && local.dirty === 0) {
@@ -599,6 +603,10 @@ async function syncOnce() {
                     const full = await fetchRemoteTiddler(title);
                     if (full && full.fields) {
                         db.putTiddler(full.fields, 'remote', full.revision);
+                        events.broadcast('update', Object.assign({}, full.fields, {
+                            revision: full.revision != null ? String(full.revision) : '0',
+                            bag: 'default'
+                        }));
                         report.pulled++;
                     }
                 } catch (e) {

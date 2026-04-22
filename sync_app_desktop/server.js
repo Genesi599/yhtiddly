@@ -17,6 +17,14 @@ const events = require('./events');
 let server = null;
 let startedPort = null;
 
+// TW5's native wiki-save timestamp format (UTC, YYYYMMDDhhmmssSSS).
+function compactTimestamp(d) {
+    const p = (n, w) => String(n).padStart(w, '0');
+    return p(d.getUTCFullYear(), 4) + p(d.getUTCMonth() + 1, 2) + p(d.getUTCDate(), 2)
+        + p(d.getUTCHours(), 2) + p(d.getUTCMinutes(), 2) + p(d.getUTCSeconds(), 2)
+        + p(d.getUTCMilliseconds(), 3);
+}
+
 function buildApp() {
     const app = express();
 
@@ -43,7 +51,11 @@ function buildApp() {
 
     // --- List all tiddlers (fat — no lazy-loading needed) ---
     // _fileCache is pre-warmed at startup so listFull() is instant (no disk reads).
+    // no-store: Chromium's reload (Ctrl+R) re-uses the cached body if the
+    // server doesn't forbid caching — which left stale tiddlers.json visible
+    // after admin-script PUTs, requiring Ctrl+Shift+R to see changes.
     app.get('/recipes/default/tiddlers.json', (req, res) => {
+        res.set('Cache-Control', 'no-store');
         res.json(db.listFull());
     });
 
@@ -52,6 +64,7 @@ function buildApp() {
         let title; try { title = decodeURIComponent(req.params.title); } catch(e) { title = req.params.title; }
         const t = db.getTiddler(title);
         if (!t) return res.status(404).end();
+        res.set('Cache-Control', 'no-store');
         res.set('Etag', '"default/' + encodeURIComponent(title) + '/' + t.revision + ':"');
         // bag is fixed server-side to 'default'. Merge fields first, then force
         // bag — so a stale `bag` accidentally stored on a tiddler can never
@@ -89,8 +102,13 @@ function buildApp() {
             if (fields.revision !== undefined) delete fields.revision;
             if (!fields.title) fields.title = title;
 
-            // Stamp modified if not set
-            if (!fields.modified) fields.modified = new Date().toISOString();
+            // Stamp modified if not set. Use TW5's compact format
+            // (YYYYMMDDhhmmssSSS) rather than ISO 8601 so strings sort
+            // correctly alongside tiddlers TW itself saved — the dashboard's
+            // "recent" list sorts by `modified` as a raw string, and mixing
+            // `2026-04-22T…` with `20260422…` puts ISO-stamped rows at the
+            // bottom regardless of real timestamp (`-` < `0` lexically).
+            if (!fields.modified) fields.modified = compactTimestamp(new Date());
 
             // Bump a per-tiddler monotonic revision. Matches TW5's
             // `state.wiki.getChangeCount(title)` contract, so the Etag we
@@ -101,6 +119,17 @@ function buildApp() {
             const revision = db.putTiddler(fields, 'local');
             res.set('Etag', '"default/' + encodeURIComponent(title) + '/' + revision + ':"');
             res.status(204).end();
+            // If an admin script requested live propagation (via X-Broadcast),
+            // push the new fields to all connected TW clients so they update
+            // the in-memory wiki without needing a page reload. TW's own saves
+            // intentionally do NOT set this header, so they are not echoed back
+            // into the editor (which could disrupt an in-progress edit).
+            if (req.get('X-Broadcast') === '1') {
+                events.broadcast('update', Object.assign({}, fields, {
+                    revision: revision != null ? String(revision) : '0',
+                    bag: 'default'
+                }));
+            }
         } catch (e) {
             console.error('[server] PUT error:', e);
             res.status(500).send(e.message);
@@ -366,6 +395,34 @@ function buildApp() {
                                     '$tw.wiki.deleteTiddler(t);' +
                                     'console.log("[sse] remote deleted",t);' +
                                 '}catch(err){console.warn("[sse] delete handler error",err);}' +
+                            '});' +
+                            // 'update' events: remote-originated writes pushed by
+                            // sync.js (or by admin scripts via X-Broadcast). We
+                            // addTiddler and then realign syncer.tiddlerInfo so
+                            // the subsequent change event does not queue a save
+                            // task back to our own server (changeCount matches
+                            // tracked → syncer sees no drift).
+                            '_es.addEventListener("update",function(e){' +
+                                'try{' +
+                                    'var d=JSON.parse(e.data);' +
+                                    'var t=d&&d.title;' +
+                                    'if(!t||!$tw.wiki)return;' +
+                                    '$tw.wiki.addTiddler(new $tw.Tiddler(d));' +
+                                    'if(v.tiddlerInfo){' +
+                                        'if(v.tiddlerInfo[t]){' +
+                                            'v.tiddlerInfo[t].changeCount=$tw.wiki.getChangeCount(t);' +
+                                            'if(d.revision)v.tiddlerInfo[t].revision=d.revision;' +
+                                        '}else{' +
+                                            'v.tiddlerInfo[t]={' +
+                                                'revision:d.revision||"0",' +
+                                                'adaptorInfo:{bag:"default"},' +
+                                                'changeCount:$tw.wiki.getChangeCount(t),' +
+                                                'hasBeenLazyLoaded:true' +
+                                            '};' +
+                                        '}' +
+                                    '}' +
+                                    'console.log("[sse] remote updated",t);' +
+                                '}catch(err){console.warn("[sse] update handler error",err);}' +
                             '});' +
                             '_es.onerror=function(){/* EventSource auto-reconnects */};' +
                         '}catch(err){console.warn("[sse] cannot open channel",err);}' +
