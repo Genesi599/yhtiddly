@@ -38,5 +38,15 @@ contextBridge.exposeInMainWorld('twApi', {
         const listener = (_e, s) => cb(s);
         ipcRenderer.on('backup-status', listener);
         return () => ipcRenderer.removeListener('backup-status', listener);
+    },
+    // In-page find. Electron's BrowserWindow has no built-in Ctrl+F UI, so
+    // main.js intercepts the hotkey and an overlay (injected into the TW
+    // page) talks to the webContents findInPage API through these methods.
+    findInPage: (text, opts) => ipcRenderer.send('find-in-page', text, opts || {}),
+    findStop: () => ipcRenderer.send('find-in-page-stop'),
+    onFindResult: (cb) => {
+        const listener = (_e, result) => cb(result);
+        ipcRenderer.on('find-result', listener);
+        return () => ipcRenderer.removeListener('find-result', listener);
     }
 });

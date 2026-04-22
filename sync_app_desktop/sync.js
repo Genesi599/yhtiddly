@@ -9,8 +9,21 @@
 // by a stale remote push — last-write-wins with local priority).
 
 const fetch = require('node-fetch');
+const https = require('https');
+const http = require('http');
 const db = require('./db');
 const config = require('./config');
+
+// Reuse TCP + TLS connections across the many probes we fire in the
+// system-override phase. Without this, each GET pays a fresh handshake,
+// turning a 305-probe cycle into a ~2-minute operation.
+const keepAliveAgent = {
+    http:  new http.Agent({ keepAlive: true, maxSockets: 25 }),
+    https: new https.Agent({ keepAlive: true, maxSockets: 25 })
+};
+function agentFor(url) {
+    return url.startsWith('https:') ? keepAliveAgent.https : keepAliveAgent.http;
+}
 
 let syncing = false;
 let timer = null;
@@ -118,10 +131,10 @@ function revisionFromEtag(etag) {
 
 async function fetchRemoteTiddlerOnce(title) {
     const url = remoteUrl('/recipes/default/tiddlers/' + encodeURIComponent(title));
-    const res = await fetch(url, { headers: defaultHeaders(), timeout: 30000 });
+    const res = await fetch(url, { headers: defaultHeaders(), timeout: 30000, agent: agentFor(url) });
     if (res.status === 404) {
         const bagUrl = remoteUrl('/bags/default/tiddlers/' + encodeURIComponent(title));
-        const bagRes = await fetch(bagUrl, { headers: defaultHeaders(), timeout: 30000 });
+        const bagRes = await fetch(bagUrl, { headers: defaultHeaders(), timeout: 30000, agent: agentFor(bagUrl) });
         if (bagRes.status === 404) return null;
         if (!bagRes.ok) throw new Error('HTTP ' + bagRes.status + ' (bag fallback)');
         const bagText = await bagRes.text();
@@ -278,6 +291,200 @@ function isInitialSyncDone() {
     return db.getMeta('initial-sync-complete') === '1';
 }
 
+// ---- System-tiddler override discovery -----------------------------------
+//
+// Why this exists: when a TW5 wiki sets `$:/config/SyncSystemTiddlersFromServer`
+// to "no" (the safe default — preserves user-customised system tiddlers from
+// being wiped by incomplete server responses), the server appends
+// `+[!is[system]]` to every filter on `/recipes/default/tiddlers.json` (see
+// TW5 core-server/server/routes/get-tiddlers-json.js:31). That hides every
+// `$:/...` tiddler from the skinny list — including user *overrides* of
+// plugin shadow tiddlers such as `$:/plugins/<author>/<plugin>/config/...`,
+// which are the tiddlers the user edits through a plugin's control-panel UI.
+//
+// Workaround: we can still fetch each override tiddler individually
+// (/recipes/default/tiddlers/<title> returns 200 with the full fields even
+// when the skinny list hides it). So we build a candidate title list from
+// the wiki's plugin manifests and probe each candidate on every sync cycle.
+// Plugins are read out of the wiki's index HTML (they appear as
+// `$:/plugins/<author>/<plugin>` paths). For each plugin, the plugin tiddler's
+// `text` is a JSON blob `{tiddlers: {<shadow-title>: {...}, ...}}` whose keys
+// enumerate every shadow tiddler that user can override.
+//
+// The expensive HTML-scrape + per-plugin GETs are cached for 1 hour in the
+// meta table; the per-title probe still runs every sync (it's cheap — ~100
+// parallel conditional GETs).
+
+const OVERRIDE_DISCOVERY_TTL_MS = 60 * 60 * 1000;
+
+// A typical 100-plugin wiki exposes ~1500 shadow tiddlers. Probing all of
+// them every sync is wasteful — most are code/UI/styles that the user will
+// never override. Filter down to tiddlers that a user might realistically
+// set from a control-panel UI: config values, preferences, state, and the
+// like. This doesn't lose correctness (we can always widen the filter) —
+// anything rejected just won't auto-pull, and the user can still edit it
+// locally, which triggers the normal dirty-push path.
+function isLikelyOverrideTarget(title) {
+    if (!title || !title.startsWith('$:/')) return false;
+    // Plugin metadata / code / UI assets — never user-overridden at runtime.
+    if (/\/(readme|license|icon|styles?|stylesheet|toolbar-button|result-panel|language|languages)$/i.test(title)) return false;
+    if (/\.js$/i.test(title)) return false;
+    if (/\.(css|png|jpg|jpeg|svg|gif|woff2?)$/i.test(title)) return false;
+    if (/\/(templates?|ui|macros?|widgets?|filters?|parsers?)\//i.test(title)) return false;
+    // Configurable surface: explicit config paths, state, preferences, plugin settings.
+    if (/\/(config|settings?|preferences?|state|status|options?)(\/|$)/i.test(title)) return true;
+    if (title.startsWith('$:/config/')) return true;
+    if (title.startsWith('$:/state/')) return true;
+    // For plugin-namespaced tiddlers, include any tiddler whose LAST segment
+    // hints at a user-facing knob (api-key, model, endpoint, url, key…).
+    if (/\/(api[-_]?(key|url|token|endpoint|base)|token|secret|model|endpoint|url|host|user(name)?|password)$/i.test(title)) return true;
+    return false;
+}
+
+async function fetchWikiHtml() {
+    const res = await fetch(remoteUrl('/'), {
+        headers: defaultHeaders({ 'Accept': 'text/html' }),
+        timeout: 60000
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.text();
+}
+
+// Scrape plugin root paths (4-segment `$:/plugins/<author>/<name>`) out of
+// the wiki's index HTML. Captures any plugin path, then dedupes to the root.
+function extractPluginRootsFromHtml(html) {
+    const roots = new Set();
+    const re = /\$:\/plugins\/[A-Za-z0-9_\-.]+\/[A-Za-z0-9_\-.]+/g;
+    let m;
+    while ((m = re.exec(html)) !== null) roots.add(m[0]);
+    return Array.from(roots);
+}
+
+async function discoverSystemOverrideTitles() {
+    const META_KEY = 'override-titles-cache';
+    const cachedRaw = db.getMeta(META_KEY);
+    if (cachedRaw) {
+        try {
+            const c = JSON.parse(cachedRaw);
+            if (c && Array.isArray(c.titles) && (Date.now() - c.ts) < OVERRIDE_DISCOVERY_TTL_MS) {
+                return c.titles;
+            }
+        } catch (e) { /* corrupt cache entry — fall through to re-discover */ }
+    }
+
+    let html;
+    try { html = await fetchWikiHtml(); }
+    catch (e) {
+        console.warn('[sync] override discovery: HTML fetch failed:', e.message);
+        return [];
+    }
+
+    const roots = extractPluginRootsFromHtml(html);
+    const titles = new Set();
+    const queue = roots.slice();
+    const CONC = 6;
+
+    async function worker() {
+        while (queue.length > 0) {
+            const pluginTitle = queue.shift();
+            if (!pluginTitle) continue;
+            try {
+                const full = await fetchRemoteTiddler(pluginTitle);
+                if (!full || !full.fields || !full.fields.text) continue;
+                let plug;
+                try { plug = JSON.parse(full.fields.text); }
+                catch (e) { continue; }  // not a plugin-shaped tiddler
+                if (plug && plug.tiddlers && typeof plug.tiddlers === 'object') {
+                    for (const k of Object.keys(plug.tiddlers)) {
+                        if (k && k.startsWith('$:/') && isLikelyOverrideTarget(k)) {
+                            titles.add(k);
+                        }
+                    }
+                }
+            } catch (e) { /* 404 / network — skip */ }
+        }
+    }
+    const workers = [];
+    for (let i = 0; i < CONC; i++) workers.push(worker());
+    await Promise.all(workers);
+
+    const out = Array.from(titles);
+    db.setMeta(META_KEY, JSON.stringify({ ts: Date.now(), titles: out }));
+    console.log('[sync] override discovery:', out.length, 'candidate titles across', roots.length, 'plugins');
+    return out;
+}
+
+// Probe each candidate system-tiddler title on the remote and ingest any that
+// exist (i.e. the user has a real override stored on the server). `putTiddler`
+// with source='remote' already guards local dirty edits, so races with a
+// concurrent local save are handled correctly.
+async function pullSystemOverrides(titles, report) {
+    if (!titles || !titles.length) return;
+    const localMap = db.getModifiedMap();
+    const queue = titles.filter(t => t && t.startsWith('$:/'));
+    // Higher concurrency here than in the main pull loop: each probe is a
+    // short GET with most responses being 404 (no override present). The
+    // keepAliveAgent pools connections so the cost per probe is tiny.
+    const CONC = 20;
+    let pulled = 0, probed = 0, deleted = 0;
+
+    async function worker() {
+        while (queue.length > 0) {
+            const title = queue.shift();
+            if (!title) continue;
+            probed++;
+
+            // Snapshot local state from the cached modified-map. We don't
+            // re-query mid-loop; a concurrent local edit that races us is
+            // still protected by putTiddler's `preserveLocal` clause and by
+            // deleteTiddler honouring the dirty flag.
+            const local = localMap[title];
+
+            let full;
+            try { full = await fetchRemoteTiddler(title); }
+            catch (e) {
+                // Network error / non-404 HTTP failure — don't interpret as
+                // "gone". Leave local state alone and retry next cycle.
+                continue;
+            }
+
+            if (full && full.fields) {
+                // Override exists on remote — ingest if newer than local.
+                const rMod = parseModified(full.fields.modified);
+                const lMod = local ? parseModified(local.modified) : 0;
+                if (!local || rMod > lMod) {
+                    db.putTiddler(full.fields, 'remote', full.revision);
+                    pulled++;
+                }
+            } else if (local && local.dirty === 0) {
+                // Remote returned 404 AND we have a *clean* local copy:
+                // treat as a remote deletion (another client reverted the
+                // override back to the plugin's shadow default). Dirty local
+                // rows are protected — the user's unpushed edit wins, and
+                // the next push will re-create the tiddler on the server.
+                //
+                // Safe because the probe list comes from the plugins'
+                // declared shadow tiddlers. We only delete titles that
+                // WE ourselves expect as potential overrides; arbitrary
+                // `$:/` tiddlers aren't touched.
+                db.deleteTiddler(title, 'remote');
+                deleted++;
+            }
+            // (no local, no remote) → candidate shadow without override;
+            // nothing to do — this is the common case for ~95% of titles.
+        }
+    }
+    const workers = [];
+    for (let i = 0; i < CONC; i++) workers.push(worker());
+    await Promise.all(workers);
+
+    report.pulledOverrides = pulled;
+    report.removedOverrides = deleted;
+    if (pulled || deleted) {
+        console.log('[sync] overrides: +' + pulled + ' / -' + deleted + ' (probed ' + probed + ')');
+    }
+}
+
 // ---- Incremental sync (every N seconds) ----
 
 async function syncOnce() {
@@ -346,6 +553,15 @@ async function syncOnce() {
 
         const toFetch = [];
         for (const title in remoteMap) {
+            // Filesystem-path ghosts. TidGi's filesystem adaptor sometimes
+            // leaks absolute file paths (e.g. "/root/…/tiddlers/foo.tid")
+            // into the skinny list on the remote. Those entries have no
+            // `modified`, their individual GET returns 404, and they can
+            // never be pulled — but the pull loop still counts them in
+            // `pullTotal`, producing a perpetual "2/2" noise in the UI.
+            // No legal TW title starts with '/', so this is safe.
+            if (title.startsWith('/')) continue;
+
             const r = remoteMap[title];
             const l = localMap[title];
             if (!l) {
@@ -400,14 +616,53 @@ async function syncOnce() {
         await Promise.all(workers);
 
         // --- Detect remote deletions ---
+        // A tiddler absent from the remote skinny list may mean one of:
+        //   (a) it was genuinely deleted on the server, or
+        //   (b) the remote's $:/config/SyncSystemTiddlersFromServer = 'no'
+        //       filters `$:/...` titles out of the skinny list even though
+        //       the tiddlers still exist on the server.
+        // For (a) we delete locally. For (b) we must NOT delete based on list
+        // absence — that would wipe user customisations like
+        // $:/config/AnimationDuration on every sync.
+        //
+        // For non-system titles: case (b) doesn't apply; safe to delete when
+        // absent from the skinny list and local is clean.
+        //
+        // For `$:/` titles: absence from the skinny list is NOT evidence of
+        // deletion. Delete detection for system tiddlers is delegated to the
+        // override-probe loop below (which runs an explicit GET per candidate
+        // on a rate-limited schedule and only touches titles that appear in
+        // some plugin's declared shadow list).
         for (const title in localMap) {
-            if (!remoteMap[title]) {
-                const dirtyRow = db.getRaw().prepare('SELECT dirty FROM tiddlers WHERE title = ?').get(title);
-                if (dirtyRow && dirtyRow.dirty === 0) {
-                    console.log('[sync] remote delete detected:', title);
-                    db.deleteTiddler(title, 'remote');
-                    report.removed++;
+            if (remoteMap[title]) continue;
+            if (title.startsWith('$:/')) continue;
+            const dirtyRow = db.getRaw().prepare('SELECT dirty FROM tiddlers WHERE title = ?').get(title);
+            if (!dirtyRow || dirtyRow.dirty !== 0) continue;
+            console.log('[sync] remote delete detected:', title);
+            db.deleteTiddler(title, 'remote');
+            report.removed++;
+        }
+
+        // --- Probe system-tiddler overrides hidden from the skinny list ---
+        // (see note above discoverSystemOverrideTitles). Rate-limited to run
+        // once every OVERRIDE_PROBE_INTERVAL_MS because each invocation costs
+        // ~300 HTTPS round-trips (one per candidate title). Failures here are
+        // non-fatal: the main push/pull above is what keeps user content in
+        // sync. This only rescues plugin config tiddlers and similar.
+        const OVERRIDE_PROBE_INTERVAL_MS = 5 * 60 * 1000;  // 5 minutes
+        const lastProbeRaw = db.getMeta('last-override-probe');
+        const lastProbe = lastProbeRaw ? parseInt(lastProbeRaw, 10) : 0;
+        if ((Date.now() - lastProbe) >= OVERRIDE_PROBE_INTERVAL_MS) {
+            try {
+                const overrideTitles = await discoverSystemOverrideTitles();
+                if (overrideTitles.length) {
+                    emit({ phase: 'pull', status: 'overrides', pullTotal: overrideTitles.length, pullDone: 0 });
+                    await pullSystemOverrides(overrideTitles, report);
                 }
+                db.setMeta('last-override-probe', String(Date.now()));
+            } catch (e) {
+                console.warn('[sync] system-override probe failed:', e.message);
+                report.errors.push({ op: 'override-probe', msg: e.message });
             }
         }
 
@@ -507,5 +762,8 @@ function getStatus() {
 
 module.exports = {
     initialFullSync, isInitialSyncDone, syncOnce, start, stop, finalSync, pushOnly,
-    getStatus, on
+    getStatus, on,
+    // Test-only exports (used by scripts/test-override-discovery.js)
+    _test_discoverSystemOverrideTitles: discoverSystemOverrideTitles,
+    _test_pullSystemOverrides: pullSystemOverrides
 };

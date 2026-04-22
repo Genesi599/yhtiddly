@@ -32,6 +32,98 @@ function addSyncLog(entry) {
     if (syncLog.length > 20) syncLog.length = 20;
 }
 
+// Ctrl+F find-bar overlay — injected into the wiki page when the hotkey
+// fires. Talks back to the main process through the `findInPage`/`findStop`
+// IPC methods exposed by preload.js; Electron's webContents.findInPage does
+// the actual highlighting + scroll.
+// Kept as a single string so we can pipe it into executeJavaScript.
+const openFindBarSnippet = `
+(function() {
+    if (document.getElementById('__tws_find_bar')) {
+        document.getElementById('__tws_find_input').focus();
+        document.getElementById('__tws_find_input').select();
+        return;
+    }
+    const api = window.twApi;
+    if (!api || !api.findInPage) {
+        console.warn('[find] twApi.findInPage not available — preload may be stale');
+        return;
+    }
+
+    const bar = document.createElement('div');
+    bar.id = '__tws_find_bar';
+    bar.style.cssText = 'position:fixed;top:10px;right:16px;z-index:2147483647;' +
+        'display:flex;align-items:center;gap:6px;' +
+        'background:#2a2e3a;color:#e8ecf4;border:1px solid #3d4250;' +
+        'border-radius:6px;padding:6px 10px;' +
+        'font:13px -apple-system,\"Segoe UI\",\"Microsoft YaHei\",sans-serif;' +
+        'box-shadow:0 4px 14px rgba(0,0,0,.3)';
+
+    const input = document.createElement('input');
+    input.id = '__tws_find_input';
+    input.placeholder = '\u67e5\u627e\u9875\u9762';  // "查找页面"
+    input.style.cssText = 'background:#1a1f2e;color:#fff;border:1px solid #3d4250;' +
+        'border-radius:4px;padding:4px 8px;width:200px;outline:none;font:inherit';
+    bar.appendChild(input);
+
+    const count = document.createElement('span');
+    count.id = '__tws_find_count';
+    count.style.cssText = 'font-size:11px;color:#8a94a8;min-width:42px;text-align:center;font-variant-numeric:tabular-nums';
+    count.textContent = '';
+    bar.appendChild(count);
+
+    function mkBtn(label, title, onclick) {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.title = title;
+        b.style.cssText = 'background:transparent;color:#c8cfdb;border:none;cursor:pointer;' +
+            'padding:3px 7px;border-radius:3px;font:inherit;line-height:1';
+        b.onmouseenter = () => b.style.background = '#3d4250';
+        b.onmouseleave = () => b.style.background = 'transparent';
+        b.onclick = (e) => { e.preventDefault(); onclick(); input.focus(); };
+        return b;
+    }
+
+    bar.appendChild(mkBtn('\u2191', '\u4e0a\u4e00\u4e2a (Shift+Enter)', () => doFind(false)));
+    bar.appendChild(mkBtn('\u2193', '\u4e0b\u4e00\u4e2a (Enter)',       () => doFind(true)));
+    bar.appendChild(mkBtn('\u00d7', '\u5173\u95ed (Esc)',                close));
+
+    document.body.appendChild(bar);
+    input.focus();
+
+    // Result listener — updates the match count display. Remove on close.
+    const unsubscribe = api.onFindResult && api.onFindResult((r) => {
+        if (!r) return;
+        if (r.matches != null && r.activeMatchOrdinal != null) {
+            count.textContent = r.activeMatchOrdinal + '/' + r.matches;
+        } else if (r.matches === 0) {
+            count.textContent = '0/0';
+        }
+    });
+
+    let prevText = '';
+    function doFind(forward) {
+        const t = input.value;
+        if (!t) { api.findStop(); count.textContent = ''; return; }
+        const findNext = (t === prevText);  // same query → jump to next/prev match
+        prevText = t;
+        api.findInPage(t, { forward: forward, findNext: findNext });
+    }
+
+    input.addEventListener('input', () => { prevText = ''; doFind(true); });
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter')       { e.preventDefault(); doFind(!e.shiftKey); }
+        else if (e.key === 'Escape') { e.preventDefault(); close(); }
+    });
+
+    function close() {
+        if (typeof unsubscribe === 'function') unsubscribe();
+        api.findStop();
+        bar.remove();
+    }
+})();
+`;
+
 // ---------- Window factories ----------
 
 function createMainWindow() {
@@ -54,6 +146,18 @@ function createMainWindow() {
     const url = 'http://localhost:' + server.getPort();
     mainWindow.loadURL(url);
     mainWindow.setMenuBarVisibility(false);
+
+    // Relay match counts from webContents.findInPage back to the renderer's
+    // find bar overlay (which subscribes via twApi.onFindResult in preload).
+    mainWindow.webContents.on('found-in-page', (_event, result) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('find-result', {
+                matches: result.matches,
+                activeMatchOrdinal: result.activeMatchOrdinal,
+                finalUpdate: result.finalUpdate
+            });
+        }
+    });
 
     // Patch TW's syncer before it processes tiddlers.json:
     // - storeTiddler is always called with isSkinny=true by the tiddlyweb adaptor,
@@ -100,7 +204,21 @@ function createMainWindow() {
         } else if (ctrl && input.shift && input.key.toLowerCase() === 'i') {
             mainWindow.webContents.toggleDevTools();
             event.preventDefault();
+        } else if (ctrl && input.key.toLowerCase() === 'f' && !input.shift && !input.alt) {
+            // Ctrl+F — open in-page find bar. TW's own keyboard bindings
+            // would otherwise swallow this and focus its sidebar search;
+            // preventDefault before the renderer sees it.
+            mainWindow.webContents.executeJavaScript(openFindBarSnippet).catch(() => {});
+            event.preventDefault();
         } else if (ctrl && input.key.toLowerCase() === 'r' && !input.shift) {
+            mainWindow.webContents.reload();
+            event.preventDefault();
+        // Hard reload (bypass cache): Ctrl+F5 or Ctrl+Shift+R
+        } else if ((ctrl && input.key === 'F5') || (ctrl && input.shift && input.key.toLowerCase() === 'r')) {
+            mainWindow.webContents.reloadIgnoringCache();
+            event.preventDefault();
+        // Plain F5 → normal reload
+        } else if (input.key === 'F5' && !ctrl) {
             mainWindow.webContents.reload();
             event.preventDefault();
         // Zoom in: Ctrl++ or Ctrl+=
@@ -451,6 +569,19 @@ function registerIpc() {
 
     ipcMain.on('close-settings', () => {
         if (settingsWindow) settingsWindow.close();
+    });
+
+    // In-page find — the find bar overlay (see openFindBarSnippet) calls
+    // these through the preload bridge. `webContents.findInPage` highlights
+    // matches and scrolls to them; `found-in-page` fires back with counts.
+    ipcMain.on('find-in-page', (_e, text, opts) => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        if (!text) return;
+        mainWindow.webContents.findInPage(text, opts || {});
+    });
+    ipcMain.on('find-in-page-stop', () => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        mainWindow.webContents.stopFindInPage('clearSelection');
     });
 
     ipcMain.handle('get-dashboard-data', () => {

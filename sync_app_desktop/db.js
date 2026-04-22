@@ -209,10 +209,14 @@ function parseModified(s) {
     return isNaN(t) ? 0 : t;
 }
 
-// Titles that are never pushed to the remote server. These are UI-state
-// tiddlers that change constantly and have no value outside the current session.
+// Titles that are never pushed to the remote server. Session-state tiddlers
+// only — these change constantly and have no value outside the current
+// session. User $:/config/* is intentionally NOT on this list so that
+// customizations (e.g. $:/config/AnimationDuration) do sync across
+// devices. See isSessionState() for the runtime check used by listFat.
 const NOSYNC_TITLES = new Set([
     '$:/StoryList',
+    '$:/HistoryList',
 ]);
 
 // TiddlyWiki draft tiddlers are local-only editor state and should never be
@@ -329,6 +333,17 @@ let _fatCache = null;
 
 function invalidateFatCache() { _fatCache = null; }
 
+// Tiddler titles that are session state, not content. They must never be
+// served to TW (TW manages them locally) and must never be synced. Mirrors
+// the default filter that TW's own TiddlyWeb adaptor uses internally.
+function isSessionState(title) {
+    return title.startsWith('$:/state/')
+        || title.startsWith('$:/temp/')
+        || title.startsWith('$:/status/')
+        || title === '$:/StoryList'
+        || title === '$:/HistoryList';
+}
+
 function listFat() {
     if (_fatCache) return _fatCache;
     const rows = db.prepare('SELECT title, filename, revision FROM tiddlers WHERE tombstone = 0').all();
@@ -339,7 +354,13 @@ function listFat() {
         if (!_fileCache.has(r.filename)) _fileCache.set(r.filename, fileFields);
         const f = normalizeFields(fileFields);
         if (!f.title) f.title = r.title;
-        if (r.title.startsWith('$:/')) continue;
+        // Skip session-state pseudo-tiddlers (TW manages these on its own).
+        // User-authored $:/config/* overrides MUST be served so TW applies
+        // them at boot (e.g. $:/config/AnimationDuration = 0 to disable
+        // open/close animations). The previous blanket $:/-prefix skip
+        // was also silently dropping palettes, themes, and all other
+        // user system-tiddler customizations.
+        if (isSessionState(r.title)) continue;
         if (r.revision) f.revision = String(r.revision);
         out.push(f);
     }
@@ -401,10 +422,11 @@ function putTiddler(fields, source = 'local', revision = null) {
     delete header.text;
 
     // Drafts are always clean: they're local editor state and are never pushed.
-    // When remote wins the conflict (preserveLocal=false), clear dirty so the
-    // overridden local change is not pushed back to the server on next sync.
+    // Session-state tiddlers ($:/state/*, $:/temp/*, $:/status/*) are also
+    // never pushed. When remote wins the conflict (preserveLocal=false),
+    // clear dirty so the overridden local change is not re-pushed.
     const dirtyNew = isDraft(fields) ? 0
-        : (source === 'local' && !NOSYNC_TITLES.has(title)) ? 1
+        : (source === 'local' && !NOSYNC_TITLES.has(title) && !isSessionState(title)) ? 1
         : preserveLocal ? 1
         : 0;
     const lastSynced = source === 'remote' ? now : (existing ? null : null);
@@ -420,7 +442,11 @@ function putTiddler(fields, source = 'local', revision = null) {
             modified    = CASE WHEN @preserve_local THEN tiddlers.modified    ELSE excluded.modified    END,
             dirty       = @dirty,
             tombstone   = 0,
-            last_synced = CASE WHEN @source = 'remote' THEN @last_synced ELSE tiddlers.last_synced END,
+            last_synced = CASE
+                              WHEN @source = 'remote' THEN @last_synced
+                              WHEN @source = 'local'  THEN NULL
+                              ELSE tiddlers.last_synced
+                          END,
             file_mtime  = CASE WHEN @preserve_local THEN tiddlers.file_mtime  ELSE excluded.file_mtime  END
     `).run({
         title,
@@ -576,12 +602,17 @@ function getDirty() {
 }
 
 function clearDirty(title, newRevision) {
+    // Called after a successful push. We update `revision` (the remote's
+    // new revision) but deliberately leave `last_synced` alone: that column
+    // tracks "last time a REMOTE pull wrote this row", and is what
+    // getRecentTiddlers uses to decide between the 本地 / 服务器 badge. A
+    // push is a local-originated write, so the badge should stay 本地 until
+    // an actual pull lands on top of it.
     if (newRevision) {
-        db.prepare('UPDATE tiddlers SET dirty = 0, revision = ?, last_synced = ? WHERE title = ?')
-            .run(newRevision, Date.now(), title);
+        db.prepare('UPDATE tiddlers SET dirty = 0, revision = ? WHERE title = ?')
+            .run(newRevision, title);
     } else {
-        db.prepare('UPDATE tiddlers SET dirty = 0, last_synced = ? WHERE title = ?')
-            .run(Date.now(), title);
+        db.prepare('UPDATE tiddlers SET dirty = 0 WHERE title = ?').run(title);
     }
 }
 
@@ -590,9 +621,9 @@ function getAllTitles() {
 }
 
 function getModifiedMap() {
-    const rows = db.prepare('SELECT title, modified, revision FROM tiddlers WHERE tombstone = 0').all();
+    const rows = db.prepare('SELECT title, modified, revision, dirty FROM tiddlers WHERE tombstone = 0').all();
     const map = {};
-    for (const r of rows) map[r.title] = { modified: r.modified, revision: r.revision };
+    for (const r of rows) map[r.title] = { modified: r.modified, revision: r.revision, dirty: r.dirty };
     return map;
 }
 
@@ -628,11 +659,29 @@ function getDirtyList() {
 }
 
 // Most-recently-modified tiddlers for the dashboard's "recent" panel.
+// Each row is annotated with `_origin`: 'local' (this machine was the last
+// writer — either unpushed, or pushed but not yet re-pulled) vs 'remote'
+// (the last write came from a pull). The heuristic relies on the fact
+// that local PUTs reset `last_synced` to NULL (see putTiddler), so:
+//   dirty = 1            → local (unpushed edit)
+//   last_synced IS NULL  → local (pushed, but no remote pull has touched it
+//                          since — the content still reflects a local write)
+//   otherwise            → remote
 function getRecentTiddlers(limit = 30) {
     const rows = db.prepare(
-        'SELECT header_json FROM tiddlers WHERE tombstone = 0 ORDER BY modified DESC LIMIT ?'
+        'SELECT header_json, dirty, last_synced FROM tiddlers WHERE tombstone = 0 ORDER BY modified DESC LIMIT ?'
     ).all(limit);
-    return rows.map(r => { try { return JSON.parse(r.header_json); } catch (e) { return null; } }).filter(Boolean);
+    const out = [];
+    for (const r of rows) {
+        let fields;
+        try { fields = JSON.parse(r.header_json); } catch (e) { continue; }
+        if (!fields) continue;
+        const origin = (r.dirty === 1 || r.last_synced == null) ? 'local' : 'remote';
+        fields._origin = origin;
+        fields._dirty = r.dirty;
+        out.push(fields);
+    }
+    return out;
 }
 
 // --- Reconcile DB index against on-disk files ----------------------------
