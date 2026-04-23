@@ -1,2 +1,22 @@
-sync_app_android/.gradle/8.13/executionHistory/executionHistory.bin
-/sync_app_android/.gradle
+# ──── Android build artifacts (sync_app_android/) ────
+# Gradle caches and build outputs — machine-local, regenerated every build.
+sync_app_android/.gradle/
+sync_app_android/build/
+sync_app_android/**/build/
+# Machine-specific SDK path
+sync_app_android/local.properties
+# IDE configs (Android Studio / IntelliJ)
+sync_app_android/.idea/
+sync_app_android/**/*.iml
+# Native + platform capture files
+sync_app_android/.externalNativeBuild/
+sync_app_android/.cxx/
+sync_app_android/captures/
+# Built APK/AAB artifacts (we ship release APK out-of-tree via release.ps1)
+sync_app_android/**/*.apk
+sync_app_android/**/*.aab
+sync_app_android/**/*.ap_
+
+# ──── OS / Editor ────
+.DS_Store
+Thumbs.db
