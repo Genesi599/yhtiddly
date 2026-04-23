@@ -1,5 +1,6 @@
 R_DEF: Internal format may change without notice
 local
+id action_check_update
 id action_reload
 id action_settings
 id btnSave
@@ -41,6 +42,7 @@ string initial_sync_starting
 string label_password
 string label_remote_url
 string label_username
+string menu_check_update
 string menu_reload
 string menu_settings
 string menu_sync
@@ -52,4 +54,5 @@ string sync_error
 string syncing
 string title_settings
 style AppTheme
+xml file_paths
 xml network_security_config

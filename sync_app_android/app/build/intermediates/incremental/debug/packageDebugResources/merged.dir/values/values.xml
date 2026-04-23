@@ -13,6 +13,7 @@
     <string name="label_password">密码（可选）</string>
     <string name="label_remote_url">远程服务器地址</string>
     <string name="label_username">用户名（可选）</string>
+    <string name="menu_check_update">检查更新</string>
     <string name="menu_reload">刷新页面</string>
     <string name="menu_settings">设置</string>
     <string name="menu_sync">立即同步</string>

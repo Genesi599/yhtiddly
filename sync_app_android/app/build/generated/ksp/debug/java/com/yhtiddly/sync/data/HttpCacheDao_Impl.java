@@ -34,6 +34,8 @@ public final class HttpCacheDao_Impl implements HttpCacheDao {
 
   private final SharedSQLiteStatement __preparedStmtOfClear;
 
+  private final SharedSQLiteStatement __preparedStmtOfDeleteByUrl;
+
   public HttpCacheDao_Impl(@NonNull final RoomDatabase __db) {
     this.__db = __db;
     this.__insertionAdapterOfHttpCacheEntity = new EntityInsertionAdapter<HttpCacheEntity>(__db) {
@@ -68,6 +70,14 @@ public final class HttpCacheDao_Impl implements HttpCacheDao {
       @NonNull
       public String createQuery() {
         final String _query = "DELETE FROM http_cache";
+        return _query;
+      }
+    };
+    this.__preparedStmtOfDeleteByUrl = new SharedSQLiteStatement(__db) {
+      @Override
+      @NonNull
+      public String createQuery() {
+        final String _query = "DELETE FROM http_cache WHERE url = ?";
         return _query;
       }
     };
@@ -109,6 +119,31 @@ public final class HttpCacheDao_Impl implements HttpCacheDao {
           }
         } finally {
           __preparedStmtOfClear.release(_stmt);
+        }
+      }
+    }, $completion);
+  }
+
+  @Override
+  public Object deleteByUrl(final String url, final Continuation<? super Unit> $completion) {
+    return CoroutinesRoom.execute(__db, true, new Callable<Unit>() {
+      @Override
+      @NonNull
+      public Unit call() throws Exception {
+        final SupportSQLiteStatement _stmt = __preparedStmtOfDeleteByUrl.acquire();
+        int _argIndex = 1;
+        _stmt.bindString(_argIndex, url);
+        try {
+          __db.beginTransaction();
+          try {
+            _stmt.executeUpdateDelete();
+            __db.setTransactionSuccessful();
+            return Unit.INSTANCE;
+          } finally {
+            __db.endTransaction();
+          }
+        } finally {
+          __preparedStmtOfDeleteByUrl.release(_stmt);
         }
       }
     }, $completion);

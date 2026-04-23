@@ -507,6 +507,22 @@ class SyncEngine(private val db: AppDatabase) {
                 }
             }
 
+            // If the remote state changed (pulled or removed anything), evict
+            // our cached "/" HTML so the next WebView load revalidates against
+            // the remote and picks up the embedded $tw.preloadTiddlers with
+            // fresh content. Otherwise the WebView keeps showing stale wiki
+            // state for up to REVALIDATE_AFTER (10 minutes) even after sync
+            // already wrote the new tiddlers to SQLite.
+            if (report.pulled > 0 || report.removed > 0) {
+                try {
+                    withContext(Dispatchers.IO) { db.httpCacheDao().deleteByUrl("/") }
+                    Log.i(TAG, "invalidated '/' HTML cache after pulling " +
+                        "${report.pulled} / removing ${report.removed}")
+                } catch (e: Exception) {
+                    Log.w(TAG, "failed to invalidate HTML cache", e)
+                }
+            }
+
             withContext(Dispatchers.IO) {
                 val now = System.currentTimeMillis()
                 db.metaDao().set(MetaEntity("last-sync", now.toString()))

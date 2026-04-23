@@ -16,4 +16,7 @@ interface HttpCacheDao {
 
     @Query("DELETE FROM http_cache")
     suspend fun clear()
+
+    @Query("DELETE FROM http_cache WHERE url = :url")
+    suspend fun deleteByUrl(url: String)
 }

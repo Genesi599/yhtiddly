@@ -12,8 +12,12 @@ android {
         applicationId = "com.yhtiddly.sync"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        // When releasing a new APK: bump versionCode (integer, monotonic) and
+        // versionName (semver-ish string used for comparison against GitHub
+        // release tag_name — see AutoUpdater.kt). Tag the commit `v<name>`
+        // and attach the signed APK as a release asset.
+        versionCode = 2
+        versionName = "1.1"
     }
 
     buildTypes {
@@ -28,6 +32,8 @@ android {
 
     buildFeatures {
         viewBinding = true
+        // Needed by AutoUpdater.kt to read BuildConfig.VERSION_NAME at runtime.
+        buildConfig = true
     }
 
     compileOptions {

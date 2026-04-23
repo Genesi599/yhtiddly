@@ -19,6 +19,7 @@
     <string name="menu_reload">刷新页面</string>
     <string name="menu_sync_status">同步状态</string>
     <string name="menu_settings">设置</string>
+    <string name="menu_check_update">检查更新</string>
 
     <!-- Sync status -->
     <string name="initial_sync_starting">正在初始化，请稍候…</string>

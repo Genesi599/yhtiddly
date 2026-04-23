@@ -4,15 +4,11 @@
         "source": "com.yhtiddly.sync.app-main-50:/layout/activity_main.xml"
     },
     {
-        "merged": "C:\\Users\\yh109\\.gradle\\daemon\\8.13\\com.yhtiddly.sync.app-mergeDebugResources-47:\\layout\\activity_settings.xml",
-        "source": "C:\\Users\\yh109\\.gradle\\daemon\\8.13\\com.yhtiddly.sync.app-main-50:\\layout\\activity_settings.xml"
+        "merged": "com.yhtiddly.sync.app-mergeDebugResources-47:/layout/activity_sync_status.xml",
+        "source": "com.yhtiddly.sync.app-main-50:/layout/activity_sync_status.xml"
     },
     {
-        "merged": "C:\\Users\\yh109\\.gradle\\daemon\\8.13\\com.yhtiddly.sync.app-mergeDebugResources-47:\\layout\\activity_sync_status.xml",
-        "source": "C:\\Users\\yh109\\.gradle\\daemon\\8.13\\com.yhtiddly.sync.app-main-50:\\layout\\activity_sync_status.xml"
-    },
-    {
-        "merged": "C:\\Users\\yh109\\.gradle\\daemon\\8.13\\com.yhtiddly.sync.app-mergeDebugResources-47:\\layout\\activity_main.xml",
-        "source": "C:\\Users\\yh109\\.gradle\\daemon\\8.13\\com.yhtiddly.sync.app-main-50:\\layout\\activity_main.xml"
+        "merged": "com.yhtiddly.sync.app-mergeDebugResources-47:/layout/activity_settings.xml",
+        "source": "com.yhtiddly.sync.app-main-50:/layout/activity_settings.xml"
     }
 ]

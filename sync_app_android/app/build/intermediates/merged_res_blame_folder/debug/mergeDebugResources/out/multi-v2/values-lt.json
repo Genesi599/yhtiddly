@@ -4,7 +4,24 @@
             "outputFile": "com.yhtiddly.sync.app-mergeDebugResources-46:/values-lt/values-lt.xml",
             "map": [
                 {
-                    "source": "C:\\Users\\yh109\\.gradle\\caches\\8.13\\transforms\\a6bbfa5225cdb2058d7d65c0acb8cdc3\\transformed\\appcompat-1.6.1\\res\\values-lt\\values-lt.xml",
+                    "source": "C:\\Users\\yh599\\.gradle\\caches\\8.13\\transforms\\308af7b2f20878f98c34b9b554406757\\transformed\\core-1.12.0\\res\\values-lt\\values-lt.xml",
+                    "from": {
+                        "startLines": "2,3,4,5,6,7,8,9",
+                        "startColumns": "4,4,4,4,4,4,4,4",
+                        "startOffsets": "55,153,263,362,465,576,686,806",
+                        "endColumns": "97,109,98,102,110,109,119,100",
+                        "endOffsets": "148,258,357,460,571,681,801,902"
+                    },
+                    "to": {
+                        "startLines": "40,41,42,43,44,45,46,115",
+                        "startColumns": "4,4,4,4,4,4,4,4",
+                        "startOffsets": "3618,3716,3826,3925,4028,4139,4249,10023",
+                        "endColumns": "97,109,98,102,110,109,119,100",
+                        "endOffsets": "3711,3821,3920,4023,4134,4244,4364,10119"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\yh599\\.gradle\\caches\\8.13\\transforms\\a6bbfa5225cdb2058d7d65c0acb8cdc3\\transformed\\appcompat-1.6.1\\res\\values-lt\\values-lt.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29",
                         "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
@@ -21,7 +38,7 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\yh109\\.gradle\\caches\\8.13\\transforms\\18a0baf1f1bd1ba56a8a72db3eaf487e\\transformed\\material-1.11.0\\res\\values-lt\\values-lt.xml",
+                    "source": "C:\\Users\\yh599\\.gradle\\caches\\8.13\\transforms\\18a0baf1f1bd1ba56a8a72db3eaf487e\\transformed\\material-1.11.0\\res\\values-lt\\values-lt.xml",
                     "from": {
                         "startLines": "2,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75",
                         "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
@@ -40,7 +57,7 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\yh109\\.gradle\\caches\\8.13\\transforms\\287d275e596f8425586a20c45a01619c\\transformed\\preference-1.2.1\\res\\values-lt\\values-lt.xml",
+                    "source": "C:\\Users\\yh599\\.gradle\\caches\\8.13\\transforms\\287d275e596f8425586a20c45a01619c\\transformed\\preference-1.2.1\\res\\values-lt\\values-lt.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8",
                         "startColumns": "4,4,4,4,4,4,4",
@@ -54,23 +71,6 @@
                         "startOffsets": "4667,4806,9633,9793,10124,10293,10378",
                         "endColumns": "72,90,77,145,168,84,80",
                         "endOffsets": "4735,4892,9706,9934,10288,10373,10454"
-                    }
-                },
-                {
-                    "source": "C:\\Users\\yh109\\.gradle\\caches\\8.13\\transforms\\308af7b2f20878f98c34b9b554406757\\transformed\\core-1.12.0\\res\\values-lt\\values-lt.xml",
-                    "from": {
-                        "startLines": "2,3,4,5,6,7,8,9",
-                        "startColumns": "4,4,4,4,4,4,4,4",
-                        "startOffsets": "55,153,263,362,465,576,686,806",
-                        "endColumns": "97,109,98,102,110,109,119,100",
-                        "endOffsets": "148,258,357,460,571,681,801,902"
-                    },
-                    "to": {
-                        "startLines": "40,41,42,43,44,45,46,115",
-                        "startColumns": "4,4,4,4,4,4,4,4",
-                        "startOffsets": "3618,3716,3826,3925,4028,4139,4249,10023",
-                        "endColumns": "97,109,98,102,110,109,119,100",
-                        "endOffsets": "3711,3821,3920,4023,4134,4244,4364,10119"
                     }
                 }
             ]
