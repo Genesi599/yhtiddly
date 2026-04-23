@@ -1,5 +1,7 @@
 package com.yhtiddly.sync
 
+import android.app.AlertDialog
+import android.app.ProgressDialog
 import android.content.Intent
 import android.net.http.SslError
 import android.os.Bundle
@@ -16,10 +18,16 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import com.yhtiddly.sync.config.AppConfig
 import com.yhtiddly.sync.databinding.ActivityMainBinding
 import com.yhtiddly.sync.server.ProxyServerManager
+import com.yhtiddly.sync.update.UpdateChecker
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val TAG = "MainActivity"
 
@@ -147,11 +155,100 @@ class MainActivity : AppCompatActivity() {
                 binding.webView.reload()
                 true
             }
+            R.id.action_check_update -> {
+                checkForUpdate()
+                true
+            }
             R.id.action_settings -> {
                 startActivity(Intent(this, SettingsActivity::class.java))
                 true
             }
             else -> super.onOptionsItemSelected(item)
+        }
+    }
+
+    // ---- In-app update flow ----
+
+    private fun checkForUpdate() {
+        Toast.makeText(this, R.string.update_checking, Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch {
+            when (val r = UpdateChecker.check()) {
+                is UpdateChecker.CheckResult.Update -> showUpdateDialog(r.info)
+                is UpdateChecker.CheckResult.UpToDate -> Toast.makeText(
+                    this@MainActivity,
+                    getString(R.string.update_up_to_date, r.current),
+                    Toast.LENGTH_SHORT
+                ).show()
+                is UpdateChecker.CheckResult.Error -> Toast.makeText(
+                    this@MainActivity,
+                    getString(R.string.update_check_failed, r.message),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    private fun showUpdateDialog(info: UpdateChecker.VersionManifest) {
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.update_title, info.versionName))
+            .setMessage(
+                getString(
+                    R.string.update_body,
+                    BuildConfig.VERSION_CODE,
+                    info.versionCode,
+                    info.notes.ifBlank { "—" }
+                )
+            )
+            .setPositiveButton(R.string.update_btn_download) { _, _ ->
+                startDownloadAndInstall(info)
+            }
+            .setNegativeButton(R.string.update_btn_later, null)
+            .show()
+    }
+
+    @Suppress("DEPRECATION") // ProgressDialog is deprecated but fine for this one-shot flow
+    private fun startDownloadAndInstall(info: UpdateChecker.VersionManifest) {
+        if (!UpdateChecker.ensureInstallPermission(this)) {
+            Toast.makeText(this, R.string.update_need_permission, Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val dialog = ProgressDialog(this).apply {
+            setProgressStyle(ProgressDialog.STYLE_HORIZONTAL)
+            setTitle(getString(R.string.update_title, info.versionName))
+            setMessage(getString(R.string.update_downloading, 0))
+            setCancelable(false)
+            max = 100
+            progress = 0
+            show()
+        }
+
+        lifecycleScope.launch {
+            val result = UpdateChecker.download(this@MainActivity, info) { read, total ->
+                if (total > 0) {
+                    val pct = (read * 100 / total).toInt()
+                    // progress callbacks arrive on IO thread; hop to main to update UI
+                    lifecycleScope.launch(Dispatchers.Main) {
+                        dialog.progress = pct
+                        dialog.setMessage(getString(R.string.update_downloading, pct))
+                    }
+                }
+            }
+            withContext(Dispatchers.Main) {
+                dialog.dismiss()
+                result.fold(
+                    onSuccess = { apkFile ->
+                        UpdateChecker.install(this@MainActivity, apkFile)
+                    },
+                    onFailure = { e ->
+                        Toast.makeText(
+                            this@MainActivity,
+                            getString(R.string.update_download_failed, e.message ?: ""),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                )
+            }
         }
     }
 

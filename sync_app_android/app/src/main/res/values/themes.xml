@@ -1,11 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="AppTheme" parent="Theme.MaterialComponents.Light.NoActionBar">
-        <item name="colorPrimary">#1A6B5C</item>
-        <item name="colorPrimaryVariant">#145449</item>
-        <item name="colorOnPrimary">#FFFFFF</item>
-        <item name="colorSecondary">#03DAC6</item>
-        <item name="colorOnSecondary">#000000</item>
+    <style name="AppTheme" parent="Theme.MaterialComponents.NoActionBar">
+        <!-- Dark palette -->
+        <item name="colorPrimary">#1F1F1F</item>
+        <item name="colorPrimaryVariant">#121212</item>
+        <item name="colorOnPrimary">#E0E0E0</item>
+        <item name="colorSecondary">#1E82DC</item>
+        <item name="colorOnSecondary">#FFFFFF</item>
+        <item name="colorSurface">#1F1F1F</item>
+        <item name="colorOnSurface">#E0E0E0</item>
         <item name="actionBarSize">40dp</item>
+
+        <!-- System chrome -->
+        <item name="android:statusBarColor">#121212</item>
+        <item name="android:navigationBarColor">#121212</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowBackground">#121212</item>
     </style>
 </resources>

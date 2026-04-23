@@ -647,6 +647,12 @@ async function syncOnce() {
         for (const title in localMap) {
             if (remoteMap[title]) continue;
             if (title.startsWith('$:/')) continue;
+            // Draft tiddlers ("Draft of 'xxx'") are local-only editor state — TW
+            // never pushes them to the remote server, so they will NEVER appear in
+            // the remote skinny list. Without this guard the sync loop would see
+            // every open draft as "remotely deleted" and hard-delete it, closing
+            // the user's edit panel mid-edit.
+            if (db.isDraft({ title })) continue;
             const dirtyRow = db.getRaw().prepare('SELECT dirty FROM tiddlers WHERE title = ?').get(title);
             if (!dirtyRow || dirtyRow.dirty !== 0) continue;
             console.log('[sync] remote delete detected:', title);

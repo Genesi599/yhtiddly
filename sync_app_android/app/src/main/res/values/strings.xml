@@ -18,7 +18,20 @@
     <string name="menu_sync">立即同步</string>
     <string name="menu_reload">刷新页面</string>
     <string name="menu_sync_status">同步状态</string>
+    <string name="menu_check_update">检查更新</string>
     <string name="menu_settings">设置</string>
+
+    <!-- In-app update -->
+    <string name="update_checking">检查更新中…</string>
+    <string name="update_up_to_date">已是最新版本（v%1$d）</string>
+    <string name="update_check_failed">检查失败：%1$s</string>
+    <string name="update_title">发现新版本 %1$s</string>
+    <string name="update_body">当前版本：%1$d\n最新版本：%2$d\n\n%3$s</string>
+    <string name="update_btn_download">下载并安装</string>
+    <string name="update_btn_later">以后再说</string>
+    <string name="update_downloading">下载中：%1$d%%</string>
+    <string name="update_download_failed">下载失败：%1$s</string>
+    <string name="update_need_permission">需要授权"安装未知应用"权限后再重试</string>
 
     <!-- Sync status -->
     <string name="initial_sync_starting">正在初始化，请稍候…</string>

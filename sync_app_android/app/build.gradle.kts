@@ -28,6 +28,7 @@ android {
 
     buildFeatures {
         viewBinding = true
+        buildConfig = true // expose VERSION_CODE to Kotlin for update checks
     }
 
     compileOptions {

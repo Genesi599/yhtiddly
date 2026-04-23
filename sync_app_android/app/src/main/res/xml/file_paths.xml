@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- FileProvider paths: we only ever share the downloaded APK from
+         internal cacheDir. Everything else stays private. -->
+    <cache-path name="updates" path="updates/" />
+</paths>
