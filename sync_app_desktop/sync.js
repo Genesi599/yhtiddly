@@ -569,6 +569,14 @@ async function syncOnce() {
             // No legal TW title starts with '/', so this is safe.
             if (title.startsWith('/')) continue;
 
+            // Drafts are local-only editor state. A remote server briefly
+            // holds a `Draft of 'X'` tiddler during TW5's save flow (PUT-draft
+            // → PUT-final → DELETE-draft); if we poll between the first two
+            // steps we'd pull the transient draft into the local DB and it
+            // would never be cleaned up (delete-detection below protects
+            // drafts to preserve live local edits). Skip drafts entirely.
+            if (db.isDraft({ title })) continue;
+
             const r = remoteMap[title];
             const l = localMap[title];
             if (!l) {
@@ -602,12 +610,18 @@ async function syncOnce() {
                 try {
                     const full = await fetchRemoteTiddler(title);
                     if (full && full.fields) {
-                        db.putTiddler(full.fields, 'remote', full.revision);
-                        events.broadcast('update', Object.assign({}, full.fields, {
-                            revision: full.revision != null ? String(full.revision) : '0',
-                            bag: 'default'
-                        }));
-                        report.pulled++;
+                        // putTiddler returns null when it refuses the write
+                        // (e.g. remote-sourced drafts). Skip the broadcast in
+                        // that case so the browser doesn't receive an SSE
+                        // update for a zombie tiddler that isn't in our DB.
+                        const stored = db.putTiddler(full.fields, 'remote', full.revision);
+                        if (stored !== null) {
+                            events.broadcast('update', Object.assign({}, full.fields, {
+                                revision: full.revision != null ? String(full.revision) : '0',
+                                bag: 'default'
+                            }));
+                            report.pulled++;
+                        }
                     }
                 } catch (e) {
                     report.errors.push({ title, op: 'pull', msg: e.message });
@@ -647,12 +661,26 @@ async function syncOnce() {
         for (const title in localMap) {
             if (remoteMap[title]) continue;
             if (title.startsWith('$:/')) continue;
-            // Draft tiddlers ("Draft of 'xxx'") are local-only editor state — TW
-            // never pushes them to the remote server, so they will NEVER appear in
-            // the remote skinny list. Without this guard the sync loop would see
-            // every open draft as "remotely deleted" and hard-delete it, closing
-            // the user's edit panel mid-edit.
-            if (db.isDraft({ title })) continue;
+            // Draft tiddlers are special: `Draft of 'X'` is local-only editor
+            // state that TW never pushes to the server, so absence from the
+            // remote skinny list is the NORMAL case and must not trigger a
+            // delete. BUT: if a draft row has last_synced IS NOT NULL, it was
+            // ingested from the remote (the server briefly held a draft from
+            // another client's save flow), and when the remote eventually
+            // deletes it we DO want to purge it locally — otherwise the
+            // zombie draft lives forever in the user's wiki. So skip only
+            // locally-created drafts (last_synced IS NULL).
+            if (db.isDraft({ title })) {
+                const row = db.getRaw().prepare('SELECT last_synced, dirty FROM tiddlers WHERE title = ?').get(title);
+                if (!row || row.last_synced == null) continue;
+                if (row.dirty !== 0) continue;
+                console.log('[sync] purge zombie draft:', title);
+                if (db.deleteTiddler(title, 'remote')) {
+                    events.broadcast('delete', { title });
+                    report.removed++;
+                }
+                continue;
+            }
             const dirtyRow = db.getRaw().prepare('SELECT dirty FROM tiddlers WHERE title = ?').get(title);
             if (!dirtyRow || dirtyRow.dirty !== 0) continue;
             console.log('[sync] remote delete detected:', title);

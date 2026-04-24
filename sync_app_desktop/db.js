@@ -161,6 +161,34 @@ function init(dbPath, tiddlersDir) {
     ).run().changes;
     if (cleared) console.log('[db] cleared dirty flag on', cleared, 'draft tiddler(s)');
 
+    // Purge remote-originated draft rows. A draft with last_synced IS NOT NULL
+    // came from the remote pull path (the user was editing on another client
+    // and the server briefly held the draft between PUT-draft and DELETE-draft).
+    // Those drafts are zombie rows — TW on the server eventually deleted them,
+    // but our sync loop skipped the delete-detection for anything matching
+    // isDraft(). Keep only locally-created drafts (last_synced IS NULL), which
+    // represent an in-progress local edit we must not disturb. Also delete the
+    // corresponding .tid files so the file store doesn't re-seed them via
+    // reconcileWithFiles on next boot.
+    {
+        const zombies = db.prepare(
+            "SELECT title, filename FROM tiddlers WHERE last_synced IS NOT NULL AND tombstone = 0 AND (" +
+            "header_json LIKE '%\"draft.of\"%' " +
+            "OR title GLOB 'Draft of ''*' " +
+            "OR title GLOB 'Draft of \"*' " +
+            "OR title GLOB 'Draft [0-9]* of ''*' " +
+            "OR title GLOB 'Draft [0-9]* of \"*')"
+        ).all();
+        if (zombies.length) {
+            const del = db.prepare('DELETE FROM tiddlers WHERE title = ?');
+            for (const z of zombies) {
+                try { tiddlerStore.removeByFilename(z.filename); } catch (e) {}
+                del.run(z.title);
+            }
+            console.log('[db] purged', zombies.length, 'remote-originated draft zombie(s)');
+        }
+    }
+
     // Purge tombstoned drafts. Prior versions of deleteTiddler tombstoned
     // drafts just like real tiddlers, but drafts are filtered out of the
     // push queue — so `dirty=1, tombstone=1` rows would sit in the index
@@ -391,6 +419,16 @@ function putTiddler(fields, source = 'local', revision = null) {
     if (!fields || !fields.title) throw new Error('putTiddler: missing title');
     fields = normalizeFields(fields);
     if (!fields.title) throw new Error('putTiddler: missing title after normalization');
+    // Reject remote drafts at the door. Drafts are local-only editor state;
+    // a remote server sometimes exposes them mid-edit (TW5's save flow is
+    // PUT-draft → PUT-final → DELETE-draft, and if we poll between the first
+    // two steps we see the draft). Writing the draft locally creates a zombie
+    // row — the server eventually deletes the draft, but sync's delete-
+    // detection skips every isDraft() title to protect live local edits, so
+    // the zombie lives on in the DB and shows up in the user's wiki.
+    if (source === 'remote' && isDraft(fields)) {
+        return null;
+    }
     invalidateFatCache();
     const title = fields.title;
     const now = Date.now();
@@ -483,8 +521,12 @@ function putTiddler(fields, source = 'local', revision = null) {
 
 // Bulk upsert from remote (transaction for speed). Local dirty rows are
 // protected: their file is left alone and their dirty flag stays on.
+// Drafts are filtered out: they're local-only editor state, and a remote
+// server sometimes exposes drafts mid-edit. See putTiddler for rationale.
 function bulkPutRemote(tiddlers) {
     if (!tiddlers || !tiddlers.length) return;
+    tiddlers = tiddlers.filter(t => !isDraft(t));
+    if (!tiddlers.length) return;
     invalidateFatCache();
     const now = Date.now();
     const getExisting = db.prepare('SELECT filename, dirty FROM tiddlers WHERE title = ?');
