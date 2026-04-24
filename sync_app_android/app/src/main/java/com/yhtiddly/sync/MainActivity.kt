@@ -1,10 +1,10 @@
 package com.yhtiddly.sync
 
+import android.app.AlertDialog
+import android.app.ProgressDialog
 import android.content.Intent
-import android.net.Uri
 import android.net.http.SslError
 import android.os.Bundle
-import android.provider.Settings
 import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
@@ -18,13 +18,16 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.appcompat.app.AlertDialog
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.yhtiddly.sync.config.AppConfig
 import com.yhtiddly.sync.databinding.ActivityMainBinding
 import com.yhtiddly.sync.server.ProxyServerManager
+import com.yhtiddly.sync.update.UpdateChecker
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val TAG = "MainActivity"
 
@@ -59,64 +62,6 @@ class MainActivity : AppCompatActivity() {
         } else {
             binding.webView.loadUrl(localUrl)
         }
-
-        // Check for a newer APK on GitHub Releases and prompt the user if
-        // one is available. Skipped-versions are remembered so we don't nag.
-        lifecycleScope.launch { checkForUpdateAndPrompt() }
-    }
-
-    private suspend fun checkForUpdateAndPrompt() {
-        val info = AutoUpdater.checkForUpdate() ?: return
-        val prefs = getSharedPreferences("auto_update", MODE_PRIVATE)
-        val skipped = prefs.getString("skipped_tag", null)
-        if (skipped == info.tagName) return
-        runOnUiThread { showUpdateDialog(info) }
-    }
-
-    private fun showUpdateDialog(info: UpdateInfo) {
-        val sizeMb = if (info.apkSize > 0) String.format("%.1f MB", info.apkSize / 1048576.0) else "?"
-        val message = buildString {
-            append("当前版本: ").append(BuildConfig.VERSION_NAME).append('\n')
-            append("新版本:   ").append(info.versionName).append("  (").append(sizeMb).append(")\n")
-            if (info.changelog.isNotBlank()) {
-                append('\n').append(info.changelog.take(800))
-            }
-        }
-        AlertDialog.Builder(this)
-            .setTitle("发现新版本")
-            .setMessage(message)
-            .setPositiveButton("更新") { _, _ -> beginUpdate(info) }
-            .setNegativeButton("稍后", null)
-            .setNeutralButton("跳过此版本") { _, _ ->
-                getSharedPreferences("auto_update", MODE_PRIVATE)
-                    .edit().putString("skipped_tag", info.tagName).apply()
-            }
-            .show()
-    }
-
-    private fun beginUpdate(info: UpdateInfo) {
-        // Android O+ requires the user to grant this app permission to install
-        // APKs. We can only check the state; the grant has to happen in
-        // Settings. Send the user there if the permission is missing.
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
-            && !packageManager.canRequestPackageInstalls()) {
-            AlertDialog.Builder(this)
-                .setTitle("需要安装权限")
-                .setMessage("Android 需要您授权本应用安装未知来源的 APK。点击下一步打开系统设置,授权后回到本应用重试更新。")
-                .setPositiveButton("下一步") { _, _ ->
-                    val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                        Uri.parse("package:$packageName"))
-                    startActivity(intent)
-                }
-                .setNegativeButton("取消", null)
-                .show()
-            return
-        }
-        val downloadId = AutoUpdater.startDownload(this, info)
-        AutoUpdater.registerCompletionHandler(this, downloadId)
-        android.widget.Toast.makeText(this,
-            "已开始下载 ${info.versionName},完成后会自动弹出安装",
-            android.widget.Toast.LENGTH_LONG).show()
     }
 
     private fun setupWebView() {
@@ -210,32 +155,100 @@ class MainActivity : AppCompatActivity() {
                 binding.webView.reload()
                 true
             }
+            R.id.action_check_update -> {
+                checkForUpdate()
+                true
+            }
             R.id.action_settings -> {
                 startActivity(Intent(this, SettingsActivity::class.java))
                 true
             }
-            R.id.action_check_update -> {
-                // Manual trigger: clears the "skip this version" memory and
-                // checks again. Shows a toast if already up-to-date.
-                getSharedPreferences("auto_update", MODE_PRIVATE)
-                    .edit().remove("skipped_tag").apply()
-                android.widget.Toast.makeText(this, "正在检查…",
-                    android.widget.Toast.LENGTH_SHORT).show()
-                lifecycleScope.launch {
-                    val info = AutoUpdater.checkForUpdate()
-                    runOnUiThread {
-                        if (info == null) {
-                            android.widget.Toast.makeText(this@MainActivity,
-                                "已是最新版本 (${BuildConfig.VERSION_NAME})",
-                                android.widget.Toast.LENGTH_SHORT).show()
-                        } else {
-                            showUpdateDialog(info)
-                        }
+            else -> super.onOptionsItemSelected(item)
+        }
+    }
+
+    // ---- In-app update flow ----
+
+    private fun checkForUpdate() {
+        Toast.makeText(this, R.string.update_checking, Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch {
+            when (val r = UpdateChecker.check()) {
+                is UpdateChecker.CheckResult.Update -> showUpdateDialog(r.info)
+                is UpdateChecker.CheckResult.UpToDate -> Toast.makeText(
+                    this@MainActivity,
+                    getString(R.string.update_up_to_date, r.current),
+                    Toast.LENGTH_SHORT
+                ).show()
+                is UpdateChecker.CheckResult.Error -> Toast.makeText(
+                    this@MainActivity,
+                    getString(R.string.update_check_failed, r.message),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    private fun showUpdateDialog(info: UpdateChecker.VersionManifest) {
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.update_title, info.versionName))
+            .setMessage(
+                getString(
+                    R.string.update_body,
+                    BuildConfig.VERSION_CODE,
+                    info.versionCode,
+                    info.notes.ifBlank { "—" }
+                )
+            )
+            .setPositiveButton(R.string.update_btn_download) { _, _ ->
+                startDownloadAndInstall(info)
+            }
+            .setNegativeButton(R.string.update_btn_later, null)
+            .show()
+    }
+
+    @Suppress("DEPRECATION") // ProgressDialog is deprecated but fine for this one-shot flow
+    private fun startDownloadAndInstall(info: UpdateChecker.VersionManifest) {
+        if (!UpdateChecker.ensureInstallPermission(this)) {
+            Toast.makeText(this, R.string.update_need_permission, Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val dialog = ProgressDialog(this).apply {
+            setProgressStyle(ProgressDialog.STYLE_HORIZONTAL)
+            setTitle(getString(R.string.update_title, info.versionName))
+            setMessage(getString(R.string.update_downloading, 0))
+            setCancelable(false)
+            max = 100
+            progress = 0
+            show()
+        }
+
+        lifecycleScope.launch {
+            val result = UpdateChecker.download(this@MainActivity, info) { read, total ->
+                if (total > 0) {
+                    val pct = (read * 100 / total).toInt()
+                    // progress callbacks arrive on IO thread; hop to main to update UI
+                    lifecycleScope.launch(Dispatchers.Main) {
+                        dialog.progress = pct
+                        dialog.setMessage(getString(R.string.update_downloading, pct))
                     }
                 }
-                true
             }
-            else -> super.onOptionsItemSelected(item)
+            withContext(Dispatchers.Main) {
+                dialog.dismiss()
+                result.fold(
+                    onSuccess = { apkFile ->
+                        UpdateChecker.install(this@MainActivity, apkFile)
+                    },
+                    onFailure = { e ->
+                        Toast.makeText(
+                            this@MainActivity,
+                            getString(R.string.update_download_failed, e.message ?: ""),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                )
+            }
         }
     }
 

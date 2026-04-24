@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<paths>
-    <!-- FileProvider path for the downloaded APK. DownloadManager writes to
-         externalCacheDir, so we expose that subtree. -->
-    <external-cache-path name="apk_cache" path="." />
-</paths>

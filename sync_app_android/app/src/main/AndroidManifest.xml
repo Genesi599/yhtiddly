@@ -3,12 +3,8 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- Required to launch the system package installer for the downloaded
-         APK. User still approves in the installer UI. -->
+    <!-- Allow installing APK updates downloaded from the configured server -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <!-- Android 13+ gates DownloadManager's completion notification behind
-         this permission. Without it the download progresses silently. -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".App"
@@ -36,6 +32,7 @@
             android:exported="false"
             android:label="@string/title_settings" />
 
+        <!-- Exposes downloaded APK to system package installer via content:// URI -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
