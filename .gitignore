@@ -17,6 +17,11 @@ sync_app_android/**/*.apk
 sync_app_android/**/*.aab
 sync_app_android/**/*.ap_
 
+# ──── Release artifacts ────
+# release.ps1 builds yhtiddly.apk and scp's it to the server out-of-tree;
+# no need to track the binary here.
+/yhtiddly.apk
+
 # ──── OS / Editor ────
 .DS_Store
 Thumbs.db

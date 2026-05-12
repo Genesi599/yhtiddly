@@ -20,7 +20,6 @@
     <string name="menu_sync_status">同步状态</string>
     <string name="menu_check_update">检查更新</string>
     <string name="menu_settings">设置</string>
-    <string name="menu_check_update">检查更新</string>
 
     <!-- In-app update -->
     <string name="update_checking">检查更新中…</string>
