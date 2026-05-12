@@ -255,7 +255,7 @@ class LocalServer(port: Int, private val db: AppDatabase, private val cacheDir: 
         val cacheKey = "/"
         val cached = runBlocking { db.httpCacheDao().get(cacheKey) }
         val now = System.currentTimeMillis()
-        val REVALIDATE_AFTER = 10 * 60 * 1000L
+        val REVALIDATE_AFTER = 30 * 1000L  // 30s (was 10min): TW's own syncer is patched out in injectPatch(), so the cache layer is the *only* path that picks up server-side changes — needs to turn over fast
 
         if (cached != null) {
             val bodyBytes = readBody(cached.bodyPath)
@@ -408,7 +408,7 @@ class LocalServer(port: Int, private val db: AppDatabase, private val cacheDir: 
         if (method == Method.GET) {
             val cached = runBlocking { db.httpCacheDao().get(uri) }
             val now = System.currentTimeMillis()
-            val REVALIDATE_AFTER = 10 * 60 * 1000L
+            val REVALIDATE_AFTER = 30 * 1000L  // 30s (was 10min): TW's own syncer is patched out in injectPatch(), so the cache layer is the *only* path that picks up server-side changes — needs to turn over fast
 
             if (cached != null) {
                 if (now - cached.updatedAt > REVALIDATE_AFTER) {
