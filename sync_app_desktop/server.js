@@ -119,6 +119,18 @@ function buildApp() {
             const revision = db.putTiddler(fields, 'local');
             res.set('Etag', '"default/' + encodeURIComponent(title) + '/' + revision + ':"');
             res.status(204).end();
+            // NOTE: do NOT call db.cacheClear() here. The `http_cache`
+            // table caches UPSTREAM responses (the 24MB root HTML from
+            // yhtiddly.fun), not locally-generated content. Clearing it
+            // on every PUT forces the next page load to refetch 24MB
+            // from upstream — fine when upstream is fast, disastrous
+            // when it's slow (loses the stale fallback, page hangs).
+            // Refresh-after-tiddler-change reflecting the new value is
+            // handled by X-Broadcast SSE (live in-memory update without
+            // page reload). If you actually need the cached root HTML
+            // to refresh (e.g. after disabling a plugin via the manager
+            // UI), invalidate explicitly via the dashboard / admin UI,
+            // not on every tiddler write.
             // If an admin script requested live propagation (via X-Broadcast),
             // push the new fields to all connected TW clients so they update
             // the in-memory wiki without needing a page reload. TW's own saves
@@ -140,6 +152,7 @@ function buildApp() {
     app.delete('/bags/default/tiddlers/:title', (req, res) => {
         let title; try { title = decodeURIComponent(req.params.title); } catch(e) { title = req.params.title; }
         db.deleteTiddler(title, 'local');
+        // Same rationale as PUT: no automatic db.cacheClear().
         res.status(204).end();
     });
 

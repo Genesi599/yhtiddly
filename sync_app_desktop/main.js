@@ -12,6 +12,22 @@ const { app, BrowserWindow, Tray, Menu, shell, ipcMain, nativeImage, dialog, ses
 const path = require('path');
 const fs = require('fs');
 
+// Expose Chrome DevTools Protocol on localhost:9222 so external tooling
+// (Python CDP clients, Claude, perf profilers) can drive the renderer
+// hands-free — open tiddlers, run JS, capture timing, read console. Bound
+// to 127.0.0.1 by default, not externally reachable. Set TWSYNC_NO_DEBUG=1
+// to disable.
+if (!process.env.TWSYNC_NO_DEBUG) {
+    const port = parseInt(process.env.TWSYNC_DEBUG_PORT, 10) || 9222;
+    app.commandLine.appendSwitch('remote-debugging-port', String(port));
+    // Electron 32+ blocks WebSocket connections to the CDP endpoint
+    // unless the origin is explicitly allowed. * is fine because the
+    // port binds to 127.0.0.1 only.
+    app.commandLine.appendSwitch('remote-allow-origins', '*');
+    console.log('[main] CDP debug port enabled on localhost:' + port +
+                ' (set TWSYNC_NO_DEBUG=1 to disable)');
+}
+
 const config = require('./config');
 const db = require('./db');
 const server = require('./server');
