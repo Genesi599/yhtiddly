@@ -33,7 +33,14 @@ private const val TAG = "MainActivity"
 
 class MainActivity : AppCompatActivity() {
 
+    companion object {
+        private const val STATE_LOCAL_URL = "localUrl"
+        private const val RETRY_DELAY_MS = 500L
+    }
+
     private lateinit var binding: ActivityMainBinding
+    private var localUrl: String = ""
+    private var isRecoveringLocalServer = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -53,10 +60,11 @@ class MainActivity : AppCompatActivity() {
         // Start (or reuse) the local proxy. The WebView always loads
         // http://127.0.0.1:<port>/ — same origin for root + API, so TiddlyWiki
         // sync works; cache persistence is handled server-side.
-        val localUrl = ProxyServerManager.ensureStarted(this)
+        localUrl = ProxyServerManager.ensureStarted(this)
         Log.i(TAG, "Local URL: $localUrl")
 
-        if (savedInstanceState != null) {
+        val savedLocalUrl = savedInstanceState?.getString(STATE_LOCAL_URL)
+        if (savedInstanceState != null && savedLocalUrl == localUrl) {
             binding.webView.restoreState(savedInstanceState)
             binding.pageProgress.visibility = View.GONE
         } else {
@@ -115,6 +123,7 @@ class MainActivity : AppCompatActivity() {
                 if (request.isForMainFrame) {
                     Log.e(TAG, "Main-frame error ${error.errorCode}: ${request.url}")
                     binding.pageProgress.visibility = View.GONE
+                    recoverLocalServer()
                 }
             }
         }
@@ -141,6 +150,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
+        outState.putString(STATE_LOCAL_URL, localUrl)
         binding.webView.saveState(outState)
     }
 
@@ -152,7 +162,7 @@ class MainActivity : AppCompatActivity() {
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         return when (item.itemId) {
             R.id.action_reload -> {
-                binding.webView.reload()
+                binding.webView.loadUrl(localUrl)
                 true
             }
             R.id.action_check_update -> {
@@ -164,6 +174,22 @@ class MainActivity : AppCompatActivity() {
                 true
             }
             else -> super.onOptionsItemSelected(item)
+        }
+    }
+
+    private fun recoverLocalServer() {
+        if (isRecoveringLocalServer) return
+        isRecoveringLocalServer = true
+        lifecycleScope.launch {
+            val nextUrl = withContext(Dispatchers.IO) {
+                ProxyServerManager.restart(applicationContext)
+            }
+            localUrl = nextUrl
+            Log.i(TAG, "Local server restarted: $localUrl")
+            binding.webView.postDelayed({
+                isRecoveringLocalServer = false
+                binding.webView.loadUrl(localUrl)
+            }, RETRY_DELAY_MS)
         }
     }
 

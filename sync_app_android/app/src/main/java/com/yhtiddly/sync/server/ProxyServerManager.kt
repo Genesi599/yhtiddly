@@ -55,7 +55,17 @@ object ProxyServerManager {
     }
 
     @Synchronized
+    fun restart(context: Context): String {
+        stopCurrent()
+        return ensureStarted(context)
+    }
+
+    @Synchronized
     fun stop() {
+        stopCurrent()
+    }
+
+    private fun stopCurrent() {
         server?.let {
             try { it.stop() } catch (_: Exception) {}
         }
