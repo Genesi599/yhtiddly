@@ -1,6 +1,6 @@
 {
-  "versionCode": 3,
-  "versionName": "1.0.2",
+  "versionCode": 4,
+  "versionName": "1.0.3",
   "apkUrl": "/yhtiddly.apk",
-  "notes": "缓存 revalidate 间隔 10min -> 30s，修改插件后同步明显加快；顺手修复菜单重复项导致的资源冲突"
+  "notes": "修复安卓端本地网页服务失联后自动重启，并避免恢复旧端口导致页面打不开"
 }
